@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Channel } from "@tauri-apps/api/core";
 import { 
   getConfig, saveConfig, getEvents, startTunnel, stopTunnel, 
   getTunnelStatus, AppConfig, Tunnel, Group, TunnelStatus, LogEvent,
-  listenToStatusChanges, DiagnosticStep, testConnection
+  listenToStatusChanges, DiagnosticStep, testConnection, listenToTrayToggle
 } from "./lib/tauri";
 import Sidebar from "./components/Sidebar";
 import TunnelOverview from "./components/TunnelOverview";
@@ -27,6 +27,10 @@ function AppContent() {
   const [config, setConfig] = useState<AppConfig>({ version: 1, groups: [], tunnels: [] });
   const [selectedTunnelId, setSelectedTunnelId] = useState<string | null>(null);
   const [statuses, setStatuses] = useState<Record<string, TunnelStatus>>({});
+  const statusesRef = useRef(statuses);
+  useEffect(() => {
+    statusesRef.current = statuses;
+  }, [statuses]);
   const [logs, setLogs] = useState<Record<string, string[]>>({});
   const [events, setEvents] = useState<LogEvent[]>([]);
 
@@ -70,21 +74,6 @@ function AppContent() {
     }
   };
 
-  useEffect(() => {
-    loadData();
-
-    // 1. Listen to real-time status change events
-    const unlistenStatus = listenToStatusChanges((payload) => {
-      setStatuses(prev => ({ ...prev, [payload.tunnelId]: payload.status }));
-      
-      // Refresh events when status changes
-      getEvents().then(evs => setEvents(evs));
-    });
-
-    return () => {
-      unlistenStatus.then(f => f());
-    };
-  }, []);
 
   // Theme effect
   useEffect(() => {
@@ -139,6 +128,17 @@ function AppContent() {
           setSelectedTunnelId(id);
           setDiagnosticsInitialSteps(results);
           setShowDiagnostics(true);
+
+          // Auto-show and focus window so the user can see the diagnostics/passphrase modal
+          try {
+            const { getCurrentWindow } = await import("@tauri-apps/api/window");
+            const appWindow = getCurrentWindow();
+            await appWindow.show();
+            await appWindow.setFocus();
+          } catch (err) {
+            console.error("Failed to show window:", err);
+          }
+
           return;
         }
       }
@@ -168,6 +168,41 @@ function AppContent() {
       alert("Failed to stop tunnel: " + e);
     }
   };
+
+  const handleStartTunnelRef = useRef(handleStartTunnel);
+  const handleStopTunnelRef = useRef(handleStopTunnel);
+  
+  useEffect(() => {
+    handleStartTunnelRef.current = handleStartTunnel;
+    handleStopTunnelRef.current = handleStopTunnel;
+  });
+
+  useEffect(() => {
+    loadData();
+
+    // 1. Listen to real-time status change events
+    const unlistenStatus = listenToStatusChanges((payload) => {
+      setStatuses(prev => ({ ...prev, [payload.tunnelId]: payload.status }));
+      
+      // Refresh events when status changes
+      getEvents().then(evs => setEvents(evs));
+    });
+
+    // 2. Listen to status bar tray menu toggle events
+    const unlistenTray = listenToTrayToggle((tunnelId) => {
+      const currentStatus = statusesRef.current[tunnelId] || "stopped";
+      if (currentStatus === "running" || currentStatus === "connecting" || currentStatus === "reconnecting") {
+        handleStopTunnelRef.current(tunnelId);
+      } else {
+        handleStartTunnelRef.current(tunnelId);
+      }
+    });
+
+    return () => {
+      unlistenStatus.then(f => f());
+      unlistenTray.then(f => f());
+    };
+  }, []);
 
   const handleStartGroup = async (groupId: string) => {
     const groupTunnels = config.tunnels.filter(t => t.groupId === groupId);

@@ -13,7 +13,7 @@ use crate::ssh_config::{parse_ssh_config, SshHostConfig};
 use std::sync::Arc;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::Mutex;
 
 struct TunnelState(Arc<Mutex<TunnelManager>>);
@@ -25,9 +25,11 @@ fn get_config() -> Result<AppConfig, String> {
 }
 
 #[tauri::command]
-fn save_config(config: AppConfig) -> Result<(), String> {
+fn save_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
     let store = ConfigStore::new();
-    store.save_config(&config)
+    store.save_config(&config)?;
+    update_tray_menu(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -110,7 +112,7 @@ fn export_config() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn import_config(config_str: String) -> Result<(), String> {
+fn import_config(app: AppHandle, config_str: String) -> Result<(), String> {
     let store = ConfigStore::new();
     let new_config: AppConfig = serde_json::from_str(&config_str)
         .map_err(|e| format!("Invalid configuration format: {}", e))?;
@@ -131,7 +133,83 @@ fn import_config(config_str: String) -> Result<(), String> {
         "Configuration imported successfully".to_string(),
     );
 
+    update_tray_menu(&app);
     Ok(())
+}
+
+pub fn update_tray_menu(app: &AppHandle) {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = app_handle.state::<TunnelState>();
+        let manager = state.0.lock().await;
+
+        let store = ConfigStore::new();
+        let config = match store.load_config() {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                eprintln!("Failed to load config for tray menu: {}", e);
+                return;
+            }
+        };
+
+        let mut menu_items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = Vec::new();
+
+        // 1. Title/Header
+        if let Ok(title) = MenuItem::with_id(&app_handle, "tunnels_title", "--- Tunnels ---", false, None::<&str>) {
+            menu_items.push(Box::new(title));
+        }
+
+        // 2. Dynamic Tunnel items
+        if config.tunnels.is_empty() {
+            if let Ok(empty) = MenuItem::with_id(&app_handle, "tunnels_empty", "No tunnels configured", false, None::<&str>) {
+                menu_items.push(Box::new(empty));
+            }
+        } else {
+            for tunnel in &config.tunnels {
+                let status = manager.get_status(&tunnel.id);
+                let status_icon = match status {
+                    TunnelStatus::Running => "🟢",
+                    TunnelStatus::Connecting => "🟡",
+                    TunnelStatus::Reconnecting => "🔄",
+                    TunnelStatus::Failed => "🔴",
+                    TunnelStatus::Stopped => "⚪",
+                };
+                let label = format!("{} {} (Port {})", status_icon, tunnel.name, tunnel.local_port);
+                let item_id = format!("toggle_{}", tunnel.id);
+                if let Ok(item) = MenuItem::with_id(&app_handle, item_id, label, true, None::<&str>) {
+                    menu_items.push(Box::new(item));
+                }
+            }
+        }
+
+        // 3. Static actions
+        if let Ok(sep1) = tauri::menu::PredefinedMenuItem::separator(&app_handle) {
+            menu_items.push(Box::new(sep1));
+        }
+        if let Ok(show) = MenuItem::with_id(&app_handle, "show", "Show Main Window", true, None::<&str>) {
+            menu_items.push(Box::new(show));
+        }
+        if let Ok(hide) = MenuItem::with_id(&app_handle, "hide", "Hide Main Window", true, None::<&str>) {
+            menu_items.push(Box::new(hide));
+        }
+        if let Ok(sep2) = tauri::menu::PredefinedMenuItem::separator(&app_handle) {
+            menu_items.push(Box::new(sep2));
+        }
+        if let Ok(quit) = MenuItem::with_id(&app_handle, "quit", "Quit", true, None::<&str>) {
+            menu_items.push(Box::new(quit));
+        }
+
+        let ref_menu_items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = menu_items
+            .iter()
+            .map(|item| item.as_ref() as &dyn tauri::menu::IsMenuItem<tauri::Wry>)
+            .collect();
+
+        if let Ok(menu) = Menu::with_items(&app_handle, &ref_menu_items) {
+            if let Some(tray) = app_handle.tray_by_id("main-tray") {
+                let _ = tray.set_menu(Some(menu));
+            }
+        }
+    });
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -155,37 +233,46 @@ pub fn run() {
             import_config
         ])
         .setup(|app| {
-            // Create a menu for the tray
-            let show_i = MenuItem::with_id(app, "show", "Show Main Window", true, None::<&str>)?;
-            let hide_i = MenuItem::with_id(app, "hide", "Hide Main Window", true, None::<&str>)?;
-            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_i, &hide_i, &quit_i])?;
+            let mut tray_builder = TrayIconBuilder::with_id("main-tray");
+            let icon_path = app.path().resolve("icons/trayTemplate.png", tauri::path::BaseDirectory::Resource);
+            let icon = icon_path.ok().and_then(|p| tauri::image::Image::from_path(p).ok());
 
-            let mut tray_builder = TrayIconBuilder::new();
-            if let Some(icon) = app.default_window_icon() {
+            if let Some(icon) = icon {
+                tray_builder = tray_builder.icon(icon).icon_as_template(true);
+            } else if let Some(icon) = app.default_window_icon() {
                 tray_builder = tray_builder.icon(icon.clone());
             }
 
             let _tray = tray_builder
-                .menu(&menu)
-                .on_menu_event(|app, event| match event.id().as_ref() {
-                    "show" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
+                .on_menu_event(|app, event| {
+                    let id = event.id().as_ref();
+                    if id.starts_with("toggle_") {
+                        let tunnel_id = id.strip_prefix("toggle_").unwrap().to_string();
+                        let _ = app.emit("tray-toggle-tunnel", tunnel_id);
+                    } else {
+                        match id {
+                            "show" => {
+                                if let Some(window) = app.get_webview_window("main") {
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
+                                }
+                            }
+                            "hide" => {
+                                if let Some(window) = app.get_webview_window("main") {
+                                    let _ = window.hide();
+                                }
+                            }
+                            "quit" => {
+                                app.exit(0);
+                            }
+                            _ => {}
                         }
                     }
-                    "hide" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.hide();
-                        }
-                    }
-                    "quit" => {
-                        app.exit(0);
-                    }
-                    _ => {}
                 })
                 .build(app)?;
+
+            // Build initial tray menu
+            update_tray_menu(app.handle());
 
             if let Some(window) = app.get_webview_window("main") {
                 let store = ConfigStore::new();

@@ -19,7 +19,6 @@ pub struct StatusPayload {
 pub struct ActiveTunnel {
     pub tunnel: Tunnel,
     pub worker: TunnelWorker,
-    pub status: TunnelStatus,
     pub log_channel: Channel<String>,
     ssh_session: SshSession,
 }
@@ -27,6 +26,7 @@ pub struct ActiveTunnel {
 pub struct TunnelManager {
     active_tunnels: HashMap<String, ActiveTunnel>,
     reconnect_tasks: HashMap<String, tokio::task::JoinHandle<()>>,
+    statuses: HashMap<String, TunnelStatus>,
 }
 
 impl TunnelManager {
@@ -34,17 +34,12 @@ impl TunnelManager {
         Self {
             active_tunnels: HashMap::new(),
             reconnect_tasks: HashMap::new(),
+            statuses: HashMap::new(),
         }
     }
 
     pub fn get_status(&self, tunnel_id: &str) -> TunnelStatus {
-        if let Some(t) = self.active_tunnels.get(tunnel_id) {
-            t.status.clone()
-        } else if self.reconnect_tasks.contains_key(tunnel_id) {
-            TunnelStatus::Reconnecting
-        } else {
-            TunnelStatus::Stopped
-        }
+        self.statuses.get(tunnel_id).cloned().unwrap_or(TunnelStatus::Stopped)
     }
 
     pub async fn start_tunnel(
@@ -67,6 +62,7 @@ impl TunnelManager {
             if let Some(task) = manager.reconnect_tasks.remove(&tunnel_id) {
                 task.abort();
             }
+            manager.statuses.insert(tunnel_id.clone(), TunnelStatus::Connecting);
         }
 
         // Notify connecting status
@@ -128,6 +124,10 @@ impl TunnelManager {
                     );
 
                     if err_msg == "PASSPHRASE_REQUIRED" {
+                        {
+                            let mut manager = m_state.lock().await;
+                            manager.statuses.insert(tunnel_id.clone(), TunnelStatus::Failed);
+                        }
                         emit_status(
                             &app_handle,
                             &tunnel_id,
@@ -140,6 +140,10 @@ impl TunnelManager {
                             m_state, app_handle, tunnel, passphrase, 1, log_ch,
                         );
                     } else {
+                        {
+                            let mut manager = m_state.lock().await;
+                            manager.statuses.insert(tunnel_id.clone(), TunnelStatus::Failed);
+                        }
                         emit_status(&app_handle, &tunnel_id, TunnelStatus::Failed, Some(err_msg));
                     }
                     return;
@@ -167,6 +171,10 @@ impl TunnelManager {
                             EventType::Failed,
                             err_msg.clone(),
                         );
+                        {
+                            let mut manager = m_state.lock().await;
+                            manager.statuses.insert(tunnel_id.clone(), TunnelStatus::Failed);
+                        }
                         emit_status(&app_handle, &tunnel_id, TunnelStatus::Failed, Some(err_msg));
                         ssh_session.disconnect().await;
                         return;
@@ -177,13 +185,13 @@ impl TunnelManager {
             let active = ActiveTunnel {
                 tunnel: tunnel.clone(),
                 worker,
-                status: TunnelStatus::Running,
                 log_channel: log_ch,
                 ssh_session,
             };
 
             {
                 let mut manager = m_state.lock().await;
+                manager.statuses.insert(tunnel_id.clone(), TunnelStatus::Running);
                 manager.active_tunnels.insert(tunnel_id.clone(), active);
             }
 
@@ -225,6 +233,8 @@ impl TunnelManager {
                 "Tunnel stopped by user".to_string(),
             );
         }
+        
+        self.statuses.insert(tunnel_id.to_string(), TunnelStatus::Stopped);
 
         // Always emit stopped status so the frontend updates
         emit_status(app, tunnel_id, TunnelStatus::Stopped, None);
@@ -246,6 +256,12 @@ impl TunnelManager {
         let logger = EventLogger::new();
 
         if attempt > max_retries {
+            let m_state_fail = manager_state.clone();
+            let t_id = tunnel_id.clone();
+            tokio::spawn(async move {
+                let mut manager = m_state_fail.lock().await;
+                manager.statuses.insert(t_id, TunnelStatus::Failed);
+            });
             emit_status(
                 &app,
                 &tunnel_id,
@@ -260,6 +276,13 @@ impl TunnelManager {
             );
             return;
         }
+
+        let m_state_reconn = manager_state.clone();
+        let t_id_reconn = tunnel_id.clone();
+        tokio::spawn(async move {
+            let mut manager = m_state_reconn.lock().await;
+            manager.statuses.insert(t_id_reconn, TunnelStatus::Reconnecting);
+        });
 
         emit_status(
             &app,
@@ -377,6 +400,10 @@ impl TunnelManager {
                             );
                         }
                     } else {
+                        {
+                            let mut manager = m_state.lock().await;
+                            manager.statuses.insert(tunnel_id.clone(), TunnelStatus::Failed);
+                        }
                         emit_status(
                             &app,
                             &tunnel_id,
@@ -401,4 +428,6 @@ fn emit_status(app: &AppHandle, tunnel_id: &str, status: TunnelStatus, message: 
         },
     )
     .ok();
+
+    super::update_tray_menu(app);
 }

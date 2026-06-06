@@ -155,6 +155,12 @@ export function listenToStatusChanges(callback: (payload: StatusPayload) => void
   });
 }
 
+export function listenToTrayToggle(callback: (tunnelId: string) => void) {
+  return listen<string>("tray-toggle-tunnel", (event: Event<string>) => {
+    callback(event.payload);
+  });
+}
+
 export function listenToLogs(callback: (payload: LogPayload) => void) {
   return listen<LogPayload>("tunnel-log", (event: Event<LogPayload>) => {
     callback(event.payload);
