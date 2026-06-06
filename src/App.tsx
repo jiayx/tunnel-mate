@@ -3,7 +3,7 @@ import { Channel } from "@tauri-apps/api/core";
 import { 
   getConfig, saveConfig, getEvents, startTunnel, stopTunnel, 
   getTunnelStatus, AppConfig, Tunnel, Group, TunnelStatus, LogEvent,
-  listenToStatusChanges
+  listenToStatusChanges, DiagnosticStep, testConnection
 } from "./lib/tauri";
 import Sidebar from "./components/Sidebar";
 import TunnelOverview from "./components/TunnelOverview";
@@ -34,6 +34,7 @@ function AppContent() {
   const [showTunnelForm, setShowTunnelForm] = useState(false);
   const [showGroupForm, setShowGroupForm] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [diagnosticsInitialSteps, setDiagnosticsInitialSteps] = useState<DiagnosticStep[] | undefined>(undefined);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark" | "system">("system");
 
@@ -114,8 +115,35 @@ function AppContent() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  const handleStartTunnel = async (id: string, passphrase?: string) => {
+  const handleStartTunnel = async (id: string, passphrase?: string, skipDiagnostics = false) => {
+    const tunnel = config.tunnels.find(t => t.id === id);
+    if (!tunnel) return;
+
+    // 1. Set status to connecting immediately for visual feedback
+    setStatuses(prev => ({ ...prev, [id]: "connecting" }));
+
     try {
+      if (!skipDiagnostics) {
+        // 2. Run silent diagnostics check
+        const results = await testConnection(tunnel, passphrase);
+        
+        const hasErrors = results.some(s => s.status === "error");
+        const authStep = results.find(s => s.name.includes("SSH Authentication"));
+        const passphraseRequired = authStep && authStep.status === "warning" && authStep.message.includes("passphrase");
+
+        if (hasErrors || passphraseRequired) {
+          // Reset status to failed (if errors) or stopped (if just passphrase warning)
+          setStatuses(prev => ({ ...prev, [id]: hasErrors ? "failed" : "stopped" }));
+          
+          // Show diagnostics modal with the pre-run steps
+          setSelectedTunnelId(id);
+          setDiagnosticsInitialSteps(results);
+          setShowDiagnostics(true);
+          return;
+        }
+      }
+
+      // 3. If everything is OK, start the actual tunnel
       const logChannel = new Channel<string>();
       logChannel.onmessage = (message) => {
         setLogs(prev => {
@@ -128,6 +156,7 @@ function AppContent() {
       };
       await startTunnel(id, logChannel, passphrase);
     } catch (e) {
+      setStatuses(prev => ({ ...prev, [id]: "failed" }));
       alert("Failed to start tunnel: " + e);
     }
   };
@@ -465,8 +494,12 @@ function AppContent() {
       {showDiagnostics && selectedTunnel && (
         <DiagnosticsModal
           tunnel={selectedTunnel}
-          onClose={() => setShowDiagnostics(false)}
-          onSuccess={(passphrase) => handleStartTunnel(selectedTunnel.id, passphrase)}
+          initialSteps={diagnosticsInitialSteps}
+          onClose={() => {
+            setShowDiagnostics(false);
+            setDiagnosticsInitialSteps(undefined);
+          }}
+          onSuccess={(passphrase) => handleStartTunnel(selectedTunnel.id, passphrase, true)}
         />
       )}
 

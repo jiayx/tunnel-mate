@@ -8,12 +8,14 @@ interface DiagnosticsModalProps {
   tunnel: Tunnel;
   onClose: () => void;
   onSuccess: (passphrase?: string) => void; // call start tunnel on success
+  initialSteps?: DiagnosticStep[];
 }
 
 export default function DiagnosticsModal({
   tunnel,
   onClose,
   onSuccess,
+  initialSteps,
 }: DiagnosticsModalProps) {
   const { t } = useLanguage();
   const [running, setRunning] = useState(false);
@@ -44,8 +46,19 @@ export default function DiagnosticsModal({
   };
 
   React.useEffect(() => {
-    startTest();
-  }, [tunnel]);
+    if (initialSteps && initialSteps.length > 0) {
+      setSteps(initialSteps);
+      // Check if passphrase was requested (warning status on SSH Authentication)
+      const authStep = initialSteps.find(s => s.name.includes("SSH Authentication"));
+      if (authStep && authStep.status === "warning" && authStep.message.includes("passphrase")) {
+        setPassphraseRequired(true);
+      } else {
+        setPassphraseRequired(false);
+      }
+    } else {
+      startTest();
+    }
+  }, [tunnel, initialSteps]);
 
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
