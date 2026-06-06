@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { Group, Tunnel, TunnelStatus } from "../lib/tauri";
 import { useLanguage } from "../lib/i18n";
+import { CompositionInput } from "./CompositionInput";
 
 interface SidebarProps {
   groups: Group[];
@@ -191,11 +192,11 @@ export default function Sidebar({
       <div className="px-3 pt-3 flex flex-col gap-2">
         <div className="relative">
           <Search className="w-4 h-4 absolute left-2.5 top-2.5 text-gray-400 dark:text-neutral-500" />
-          <input
+          <CompositionInput
             type="text"
             placeholder={t("searchPlaceholder")}
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onValueChange={setSearchQuery}
             className="w-full pl-9 pr-3 py-1.5 text-xs bg-white dark:bg-neutral-955 border border-gray-200 dark:border-neutral-800 rounded-md text-gray-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 transition"
           />
         </div>

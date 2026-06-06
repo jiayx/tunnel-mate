@@ -8,6 +8,7 @@ import {
   importConfig, clearEvents 
 } from "../lib/tauri";
 import { useLanguage } from "../lib/i18n";
+import { CompositionInput } from "./CompositionInput";
 
 interface SettingsModalProps {
   theme: "light" | "dark" | "system";
@@ -442,10 +443,10 @@ export default function SettingsModal({
                           Override target path for local SSH Config discovery. Leave empty to use system default.
                         </span>
                       </div>
-                      <input
+                      <CompositionInput
                         type="text"
                         value={sshConfigPath}
-                        onChange={(e) => setSshConfigPath(e.target.value)}
+                        onValueChange={setSshConfigPath}
                         placeholder="~/.ssh/config"
                         className="w-full px-2.5 py-1 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md text-gray-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 transition"
                       />

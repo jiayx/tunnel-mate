@@ -12,6 +12,7 @@ import DiagnosticsModal from "./components/DiagnosticsModal";
 import SettingsModal from "./components/SettingsModal";
 import { Folder, X } from "lucide-react";
 import { LanguageProvider, useLanguage } from "./lib/i18n";
+import { CompositionInput } from "./components/CompositionInput";
 
 export default function App() {
   return (
@@ -336,7 +337,6 @@ function AppContent() {
       {/* Main panel */}
       <TunnelOverview
         tunnel={selectedTunnel}
-        groups={config.groups}
         tunnels={config.tunnels}
         status={selectedStatus}
         statuses={statuses}
@@ -361,8 +361,6 @@ function AppContent() {
         onRefreshEvents={() => {
           getEvents().then(evs => setEvents(evs));
         }}
-        onSaveTunnel={handleSaveTunnel}
-        onDeleteTunnel={handleDeleteTunnel}
       />
 
       {/* NEW / EDIT TUNNEL FORM MODAL */}
@@ -403,21 +401,21 @@ function AppContent() {
             <div className="p-5 space-y-3">
               <div>
                 <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1 select-none">{t("groupName")}</label>
-                <input
+                <CompositionInput
                   type="text"
                   placeholder="e.g., Production, Staging"
                   value={newGroupName}
-                  onChange={(e) => setNewGroupName(e.target.value)}
+                  onValueChange={setNewGroupName}
                   className="w-full px-3 py-1.5 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500 text-gray-900 dark:text-white transition"
                 />
               </div>
               <div>
                 <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1 select-none">{t("descOptional")}</label>
-                <input
+                <CompositionInput
                   type="text"
                   placeholder="e.g., Database cluster forwards"
                   value={newGroupDesc}
-                  onChange={(e) => setNewGroupDesc(e.target.value)}
+                  onValueChange={setNewGroupDesc}
                   className="w-full px-3 py-1.5 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500 text-gray-900 dark:text-white transition"
                 />
               </div>

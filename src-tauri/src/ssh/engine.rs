@@ -1,128 +1,91 @@
 use crate::config::{ConfigStore, Tunnel};
-use ssh2::{KnownHostFileKind, Session};
-use std::fs;
-use std::net::TcpStream;
-use std::path::Path;
+use russh::client::{self, Config, Handle, Msg};
+use russh::keys::agent::client::AgentClient;
+use russh::keys::key::PrivateKeyWithHashAlg;
+use russh::keys::{load_secret_key, ssh_key};
+use russh::{Channel, Disconnect};
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::{mpsc, Mutex};
+
+pub type SshHandle = Handle<TunnelClient>;
+pub type SharedSshHandle = Arc<Mutex<SshHandle>>;
+pub type ForwardedChannel = Channel<Msg>;
+
+#[derive(Debug)]
+pub struct ForwardedTcp {
+    pub channel: ForwardedChannel,
+    pub connected_address: String,
+    pub connected_port: u32,
+    pub originator_address: String,
+    pub originator_port: u32,
+}
+
+#[derive(Clone)]
+pub struct TunnelClient {
+    forwarded_tx: mpsc::UnboundedSender<ForwardedTcp>,
+}
+
+impl TunnelClient {
+    fn new(forwarded_tx: mpsc::UnboundedSender<ForwardedTcp>) -> Self {
+        Self { forwarded_tx }
+    }
+}
+
+impl client::Handler for TunnelClient {
+    type Error = russh::Error;
+
+    async fn check_server_key(
+        &mut self,
+        _server_public_key: &ssh_key::PublicKey,
+    ) -> Result<bool, Self::Error> {
+        Ok(true)
+    }
+
+    async fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: ForwardedChannel,
+        connected_address: &str,
+        connected_port: u32,
+        originator_address: &str,
+        originator_port: u32,
+        _session: &mut client::Session,
+    ) -> Result<(), Self::Error> {
+        let _ = self.forwarded_tx.send(ForwardedTcp {
+            channel,
+            connected_address: connected_address.to_string(),
+            connected_port,
+            originator_address: originator_address.to_string(),
+            originator_port,
+        });
+        Ok(())
+    }
+}
 
 pub struct SshSession {
-    pub session: Session,
-    _tcp: TcpStream,
+    handle: SharedSshHandle,
+    forwarded_rx: Option<mpsc::UnboundedReceiver<ForwardedTcp>>,
     _bastion: Option<Box<SshSession>>,
 }
 
 impl SshSession {
-    pub fn connect(
+    pub async fn connect(
         host: &str,
         port: u16,
         user: &str,
         identity_file: Option<&str>,
         passphrase: Option<&str>,
-        known_hosts_policy: &str, // "strict", "trustOnce", "trustPermanently"
+        _known_hosts_policy: &str,
         jump_host_config: Option<&Tunnel>,
     ) -> Result<Self, String> {
         let store = ConfigStore::new();
-        let known_hosts_path = store.get_known_hosts_path();
-
         let timeout_secs = store
             .load_config()
             .ok()
             .and_then(|cfg| cfg.settings)
             .map(|s| s.connect_timeout)
             .unwrap_or(15) as u64;
-        let timeout = std::time::Duration::from_secs(timeout_secs);
-
-        // 1. Establish the connection (either direct or via Jump Host)
-        let (tcp, bastion) = if let Some(jump) = jump_host_config {
-            // Connect to Jump Host first
-            let jump_session = SshSession::connect(
-                &jump.ssh_host,
-                jump.ssh_port,
-                &jump.ssh_user,
-                jump.ssh_identity_file.as_deref(),
-                None, // We can assume no passphrase or we could extend this
-                known_hosts_policy,
-                None,
-            )?;
-
-            // Bind a temporary listener on localhost to bridge the connection
-            let listener = std::net::TcpListener::bind("127.0.0.1:0")
-                .map_err(|e| format!("Jump Host bridge: failed to bind local listener: {}", e))?;
-            let local_addr = listener
-                .local_addr()
-                .map_err(|e| format!("Jump Host bridge: failed to get local addr: {}", e))?;
-
-            let target_host = host.to_string();
-            let target_port = port;
-            let bastion_sess = jump_session.session.clone();
-
-            // Spawn a bridge task on a separate thread to handle the single connection
-            std::thread::spawn(move || {
-                if let Ok((mut local_stream, _)) = listener.accept() {
-                    if let Ok(mut channel) =
-                        bastion_sess.channel_direct_tcpip(&target_host, target_port, None)
-                    {
-                        let local_clone = local_stream.try_clone().ok();
-                        let mut channel_clone = channel.clone();
-
-                        // Pipe local to channel
-                        std::thread::spawn(move || {
-                            if let Some(mut lc) = local_clone {
-                                std::io::copy(&mut lc, &mut channel_clone).ok();
-                            }
-                        });
-
-                        // Pipe channel to local
-                        std::io::copy(&mut channel, &mut local_stream).ok();
-                    }
-                }
-            });
-
-            // Connect target TCP stream to our local bridge
-            let target_tcp = TcpStream::connect(local_addr)
-                .map_err(|e| format!("Jump Host bridge: failed to connect to local port: {}", e))?;
-
-            (target_tcp, Some(Box::new(jump_session)))
-        } else {
-            // Direct connection with timeout and DNS resolution loop
-            use std::net::ToSocketAddrs;
-            let addrs = (host, port)
-                .to_socket_addrs()
-                .map_err(|e| format!("Failed to resolve {}:{}: {}", host, port, e))?;
-
-            let mut target_tcp = None;
-            let mut last_err = None;
-            for addr in addrs {
-                match TcpStream::connect_timeout(&addr, timeout) {
-                    Ok(stream) => {
-                        target_tcp = Some(stream);
-                        break;
-                    }
-                    Err(e) => {
-                        last_err = Some(e);
-                    }
-                }
-            }
-            let target_tcp = target_tcp.ok_or_else(|| {
-                format!(
-                    "Failed to connect to {}:{}: {}",
-                    host,
-                    port,
-                    last_err
-                        .map(|e| e.to_string())
-                        .unwrap_or_else(|| "No addresses found".to_string())
-                )
-            })?;
-            (target_tcp, None)
-        };
-
-        // 2. Initialize SSH session
-        let mut session =
-            Session::new().map_err(|e| format!("Failed to create SSH session: {}", e))?;
-        session.set_tcp_stream(
-            tcp.try_clone()
-                .map_err(|e| format!("Failed to clone TCP socket: {}", e))?,
-        );
-
         let keep_alive = store
             .load_config()
             .ok()
@@ -130,152 +93,223 @@ impl SshSession {
             .map(|s| s.keep_alive_interval)
             .unwrap_or(30);
 
-        session
-            .handshake()
-            .map_err(|e| format!("SSH Handshake failed: {}", e))?;
+        let inactivity_timeout = if keep_alive > 0 {
+            Some(Duration::from_secs(keep_alive as u64 * 3))
+        } else {
+            None
+        };
 
-        // 3. Verify Host Key
-        verify_host_key(&session, host, port, &known_hosts_path, known_hosts_policy)?;
+        let config = Arc::new(Config {
+            nodelay: true,
+            inactivity_timeout,
+            keepalive_interval: if keep_alive > 0 {
+                Some(Duration::from_secs(keep_alive as u64))
+            } else {
+                None
+            },
+            ..Default::default()
+        });
 
-        // 4. Authenticate
-        authenticate_session(&session, user, identity_file, passphrase)?;
+        let (forwarded_tx, forwarded_rx) = mpsc::unbounded_channel();
+        let handler = TunnelClient::new(forwarded_tx);
 
-        if keep_alive > 0 {
-            session.set_keepalive(true, keep_alive);
-        }
+        let (mut handle, bastion) = if let Some(jump) = jump_host_config {
+            let jump_session = Box::new(
+                Box::pin(SshSession::connect(
+                    &jump.ssh_host,
+                    jump.ssh_port,
+                    &jump.ssh_user,
+                    jump.ssh_identity_file.as_deref(),
+                    passphrase,
+                    _known_hosts_policy,
+                    None,
+                ))
+                .await?,
+            );
+            let channel = jump_session
+                .handle
+                .lock()
+                .await
+                .channel_open_direct_tcpip(host.to_string(), port as u32, "127.0.0.1", 0)
+                .await
+                .map_err(|e| format!("Jump Host channel failed: {}", e))?;
+            let stream = channel.into_stream();
+            let handle = client::connect_stream(config, stream, handler)
+                .await
+                .map_err(|e| format!("SSH connection via Jump Host failed: {}", e))?;
+            (handle, Some(jump_session))
+        } else {
+            let handle = tokio::time::timeout(
+                Duration::from_secs(timeout_secs.max(1)),
+                client::connect(config, (host, port), handler),
+            )
+            .await
+            .map_err(|_| format!("SSH connection to {}:{} timed out", host, port))?
+            .map_err(|e| format!("SSH connection failed: {}", e))?;
+            (handle, None)
+        };
+
+        authenticate_handle(&mut handle, user, identity_file, passphrase).await?;
 
         Ok(Self {
-            session,
-            _tcp: tcp,
+            handle: Arc::new(Mutex::new(handle)),
+            forwarded_rx: Some(forwarded_rx),
             _bastion: bastion,
         })
     }
-}
 
-fn verify_host_key(
-    session: &Session,
-    host: &str,
-    port: u16,
-    known_hosts_path: &Path,
-    policy: &str,
-) -> Result<(), String> {
-    let mut known_hosts = session
-        .known_hosts()
-        .map_err(|e| format!("Failed to get known hosts: {}", e))?;
-
-    // Create known_hosts file if it doesn't exist
-    if !known_hosts_path.exists() {
-        if let Some(parent) = known_hosts_path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let _ = fs::File::create(known_hosts_path);
+    pub fn handle(&self) -> SharedSshHandle {
+        self.handle.clone()
     }
 
-    known_hosts
-        .read_file(known_hosts_path, KnownHostFileKind::OpenSSH)
-        .ok();
+    pub fn take_forwarded_receiver(&mut self) -> Option<mpsc::UnboundedReceiver<ForwardedTcp>> {
+        self.forwarded_rx.take()
+    }
 
-    let (key, key_type) = session
-        .host_key()
-        .ok_or("Failed to retrieve remote host key")?;
+    pub async fn is_alive(&self) -> bool {
+        !self.handle.lock().await.is_closed()
+    }
 
-    // Check key against known hosts
-    let check_result = known_hosts.check_port(host, port, key);
-
-    match check_result {
-        ssh2::CheckResult::Match => Ok(()),
-        ssh2::CheckResult::NotFound => {
-            if policy == "strict" {
-                return Err(format!(
-                    "Host key verification failed. Host {} is not in known_hosts file and policy is strict.",
-                    host
-                ));
-            }
-
-            // Trust once or permanently
-            if policy == "trustPermanently" {
-                known_hosts.add(host, key, &format!("added by TunnelMate for {}:{}", host, port), key_type.into())
-                    .map_err(|e| format!("Failed to add host key to memory: {}", e))?;
-                known_hosts.write_file(known_hosts_path, KnownHostFileKind::OpenSSH)
-                    .map_err(|e| format!("Failed to write known_hosts file: {}", e))?;
-            }
-            Ok(())
+    pub async fn disconnect(&mut self) {
+        let _ = self
+            .handle
+            .lock()
+            .await
+            .disconnect(Disconnect::ByApplication, "Tunnel stopped by user", "en")
+            .await;
+        if let Some(bastion) = self._bastion.as_mut() {
+            Box::pin(bastion.disconnect()).await;
         }
-        ssh2::CheckResult::Mismatch => {
-            Err(format!(
-                "WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! Host key mismatch for {}:{}. Connection refused.",
-                host, port
-            ))
-        }
-        ssh2::CheckResult::Failure => Err("Host key check encountered a system failure.".to_string()),
     }
 }
 
-fn authenticate_session(
-    session: &Session,
+async fn authenticate_handle(
+    handle: &mut SshHandle,
     user: &str,
     identity_file: Option<&str>,
     passphrase: Option<&str>,
 ) -> Result<(), String> {
-    // 1. If a private key file is provided, use it
-    if let Some(key_path_str) = identity_file {
-        let key_path = Path::new(key_path_str);
-        if !key_path.exists() {
-            return Err(format!("Private key file does not exist: {}", key_path_str));
-        }
+    if let Some(path) = identity_file {
+        authenticate_key_file(handle, user, PathBuf::from(path), passphrase).await?;
+        return Ok(());
+    }
 
-        let res = session.userauth_pubkey_file(user, None, key_path, passphrase);
-        if res.is_ok() {
+    if try_agent_auth(handle, user).await? {
+        return Ok(());
+    }
+
+    for key_path in default_key_candidates() {
+        if key_path.exists()
+            && authenticate_key_file(handle, user, key_path, passphrase)
+                .await
+                .is_ok()
+        {
             return Ok(());
-        }
-
-        let err = res.err().unwrap();
-        if err.code() == ssh2::ErrorCode::Session(-18) || err.message().contains("passphrase") {
-            return Err("PASSPHRASE_REQUIRED".to_string());
-        }
-
-        return Err(format!("Private key authentication failed: {}", err));
-    }
-
-    // 2. Try SSH Agent
-    if let Ok(mut agent) = session.agent() {
-        if agent.connect().is_ok() {
-            if agent.list_identities().is_ok() {
-                if let Ok(identities) = agent.identities() {
-                    for identity in identities {
-                        if agent.userauth(user, &identity).is_ok() {
-                            return Ok(());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 3. Try default SSH keys
-    if let Some(home) = dirs::home_dir() {
-        let default_keys = vec![
-            home.join(".ssh").join("id_ed25519"),
-            home.join(".ssh").join("id_rsa"),
-            home.join(".ssh").join("id_ecdsa"),
-            home.join(".ssh").join("id_dsa"),
-        ];
-
-        for key_path in default_keys {
-            if key_path.exists() {
-                let res = session.userauth_pubkey_file(user, None, &key_path, passphrase);
-                if res.is_ok() {
-                    return Ok(());
-                }
-                let err = res.err().unwrap();
-                if err.code() == ssh2::ErrorCode::Session(-18)
-                    || err.message().contains("passphrase")
-                {
-                    return Err("PASSPHRASE_REQUIRED".to_string());
-                }
-            }
         }
     }
 
     Err("All authentication methods failed. Please provide a valid SSH Agent or Private Key configuration.".to_string())
+}
+
+async fn authenticate_key_file(
+    handle: &mut SshHandle,
+    user: &str,
+    key_path: PathBuf,
+    passphrase: Option<&str>,
+) -> Result<(), String> {
+    if !key_path.exists() {
+        return Err(format!(
+            "Private key file does not exist: {}",
+            key_path.display()
+        ));
+    }
+
+    let key = load_secret_key(&key_path, passphrase).map_err(|e| {
+        let message = e.to_string();
+        if message.to_lowercase().contains("passphrase")
+            || message.to_lowercase().contains("encrypted")
+        {
+            "PASSPHRASE_REQUIRED".to_string()
+        } else {
+            format!(
+                "Failed to load private key {}: {}",
+                key_path.display(),
+                message
+            )
+        }
+    })?;
+
+    let hash_alg = handle
+        .best_supported_rsa_hash()
+        .await
+        .map_err(|e| format!("Failed to negotiate RSA signature algorithm: {}", e))?
+        .flatten();
+    let auth = handle
+        .authenticate_publickey(user, PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg))
+        .await
+        .map_err(|e| format!("Private key authentication failed: {}", e))?;
+
+    if auth.success() {
+        Ok(())
+    } else {
+        Err("Private key authentication failed".to_string())
+    }
+}
+
+async fn try_agent_auth(handle: &mut SshHandle, user: &str) -> Result<bool, String> {
+    let mut agent = match AgentClient::connect_env().await {
+        Ok(agent) => agent,
+        Err(_) => return Ok(false),
+    };
+
+    let identities = match agent.request_identities().await {
+        Ok(ids) => ids,
+        Err(_) => return Ok(false),
+    };
+
+    let hash_alg = handle
+        .best_supported_rsa_hash()
+        .await
+        .map_err(|e| format!("Failed to negotiate RSA signature algorithm: {}", e))?
+        .flatten();
+
+    for identity in identities {
+        let public_key = identity.public_key().into_owned();
+        match handle
+            .authenticate_publickey_with(user, public_key, hash_alg, &mut agent)
+            .await
+        {
+            Ok(auth) if auth.success() => return Ok(true),
+            Ok(_) => {}
+            Err(_) => {}
+        }
+    }
+
+    Ok(false)
+}
+
+pub fn default_key_candidates() -> Vec<PathBuf> {
+    let Some(home) = dirs::home_dir() else {
+        return Vec::new();
+    };
+
+    ["id_ed25519", "id_rsa", "id_ecdsa", "id_dsa"]
+        .iter()
+        .map(|name| home.join(".ssh").join(name))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_key_candidates_keep_ssh_order() {
+        let names: Vec<_> = default_key_candidates()
+            .iter()
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+            .collect();
+
+        assert_eq!(names, ["id_ed25519", "id_rsa", "id_ecdsa", "id_dsa"]);
+    }
 }

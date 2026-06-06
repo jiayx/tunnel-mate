@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Search, Calendar, Info, Clock, AlertTriangle, ShieldCheck, PlayCircle, PlusCircle, Trash2 } from "lucide-react";
 import { useLanguage } from "../lib/i18n";
 import { LogEvent } from "../lib/tauri";
+import { CompositionInput } from "./CompositionInput";
 
 interface EventsViewerProps {
   events: LogEvent[];
@@ -61,11 +62,11 @@ export default function EventsViewer({
       <div className="px-4 py-3 bg-gray-50 dark:bg-neutral-900/50 border-b border-gray-200 dark:border-neutral-800 flex items-center justify-between gap-3">
         <div className="relative">
           <Search className="w-4 h-4 absolute left-2.5 top-2.5 text-gray-400 dark:text-neutral-500" />
-          <input
+          <CompositionInput
             type="text"
             placeholder={t("searchEventsLog")}
             value={filterQuery}
-            onChange={(e) => setFilterQuery(e.target.value)}
+            onValueChange={setFilterQuery}
             className="pl-9 pr-3 py-1.5 bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 w-52 text-gray-900 dark:text-white"
           />
         </div>

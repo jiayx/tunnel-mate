@@ -1,18 +1,16 @@
 import { useState, useEffect } from "react";
 import { 
-  Play, Square, Terminal, Calendar, Settings, 
-  Activity, ShieldCheck, Link, Clock, ArrowRight,
+  Play, Square, Terminal, Calendar, 
+  Activity, ShieldCheck, Link, Clock,
   AlertTriangle
 } from "lucide-react";
-import { Tunnel, Group, TunnelStatus, LogEvent } from "../lib/tauri";
+import { Tunnel, TunnelStatus, LogEvent } from "../lib/tauri";
 import LogsViewer from "./LogsViewer";
 import EventsViewer from "./EventsViewer";
-import TunnelForm from "./TunnelForm";
 import { useLanguage } from "../lib/i18n";
 
 interface TunnelOverviewProps {
   tunnel: Tunnel | null;
-  groups: Group[];
   tunnels: Tunnel[];
   status: TunnelStatus;
   statuses: Record<string, TunnelStatus>;
@@ -23,15 +21,12 @@ interface TunnelOverviewProps {
   onTestConnection: () => void;
   onClearLogs: () => void;
   onRefreshEvents: () => void;
-  onSaveTunnel: (t: Tunnel) => void;
-  onDeleteTunnel: (id: string) => void;
 }
 
-type PanelTab = "overview" | "logs" | "events" | "settings";
+type PanelTab = "overview" | "logs" | "events";
 
 export default function TunnelOverview({
   tunnel,
-  groups,
   tunnels,
   status,
   statuses,
@@ -42,13 +37,10 @@ export default function TunnelOverview({
   onTestConnection,
   onClearLogs,
   onRefreshEvents,
-  onSaveTunnel,
-  onDeleteTunnel,
 }: TunnelOverviewProps) {
   const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState<PanelTab>("overview");
   const [uptime, setUptime] = useState<number>(0);
-  const [isEditing, setIsEditing] = useState(false);
 
   // Reset tab when tunnel changes
   useEffect(() => {
@@ -260,7 +252,6 @@ export default function TunnelOverview({
           { id: "overview", label: t("tabOverview"), icon: Activity },
           { id: "logs", label: t("tabLogs"), icon: Terminal },
           { id: "events", label: t("tabEvents"), icon: Calendar },
-          { id: "settings", label: t("tabSettings"), icon: Settings },
         ].map(tab => (
           <button
             key={tab.id}
@@ -284,20 +275,34 @@ export default function TunnelOverview({
         {activeTab === "overview" && (
           <div className="space-y-6 max-w-3xl">
             {/* Status Hero Card */}
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4">
+              {/* Card 1: Listener */}
               <div className="p-4 bg-white dark:bg-neutral-900 border border-gray-200 dark:border-neutral-800 rounded-xl">
-                <span className="text-[10px] uppercase font-bold tracking-wider text-gray-400 dark:text-neutral-500 block mb-1">{t("localBind")}</span>
+                <span className="text-[10px] uppercase font-bold tracking-wider text-gray-400 dark:text-neutral-500 block mb-1">
+                  {tunnel.tunnelType === "remote" ? t("remoteListener") : t("localListener")}
+                </span>
                 <div className="flex items-center gap-2 text-xs font-semibold text-gray-800 dark:text-neutral-200">
-                  <span>localhost:{tunnel.localPort}</span>
-                  <ArrowRight className="w-3.5 h-3.5 text-gray-400" />
+                  <span className="truncate">{tunnel.localHost || "127.0.0.1"}:{tunnel.localPort}</span>
+                </div>
+              </div>
+
+              {/* Card 2: Destination / Routing */}
+              <div className="p-4 bg-white dark:bg-neutral-900 border border-gray-200 dark:border-neutral-800 rounded-xl">
+                <span className="text-[10px] uppercase font-bold tracking-wider text-gray-400 dark:text-neutral-500 block mb-1">
+                  {tunnel.tunnelType === "local" ? t("remoteDest") : (tunnel.tunnelType === "remote" ? t("localDest") : t("dynamicRouting"))}
+                </span>
+                <div className="flex items-center gap-2 text-xs font-semibold text-indigo-600 dark:text-indigo-400">
                   {tunnel.tunnelType === "socks5" ? (
-                    <span className="text-indigo-500">{t("socks5Forward")}</span>
+                    <span className="truncate">{t("socks5Forward")}</span>
+                  ) : tunnel.tunnelType === "remote" ? (
+                    <span className="truncate">{tunnel.remoteHost || "127.0.0.1"}:{tunnel.remotePort}</span>
                   ) : (
-                    <span>{tunnel.remoteHost}:{tunnel.remotePort}</span>
+                    <span className="truncate">{tunnel.remoteHost}:{tunnel.remotePort}</span>
                   )}
                 </div>
               </div>
 
+              {/* Card 3: Uptime */}
               <div className="p-4 bg-white dark:bg-neutral-900 border border-gray-200 dark:border-neutral-800 rounded-xl">
                 <span className="text-[10px] uppercase font-bold tracking-wider text-gray-400 dark:text-neutral-500 block mb-1">{t("uptime")}</span>
                 <div className="flex items-center gap-2 text-xs font-semibold text-gray-800 dark:text-neutral-200">
@@ -313,7 +318,7 @@ export default function TunnelOverview({
                 <span className="text-[10px] font-semibold text-gray-400 dark:text-neutral-500 uppercase tracking-wider block mb-3">{t("jumpHostMap")}</span>
                 <div className="flex items-center justify-between text-xs text-center relative max-w-md mx-auto">
                   <div className="bg-neutral-100 dark:bg-neutral-800 border border-gray-200 dark:border-neutral-750 px-3 py-2 rounded-lg font-medium">
-                    {t("localBind")}
+                    {t("client")}
                   </div>
                   <div className="h-0.5 bg-indigo-500/30 flex-1 mx-2 relative top-0.5" />
                   <div className="bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900/60 px-3 py-2 rounded-lg font-semibold text-indigo-600 dark:text-indigo-400">
@@ -331,24 +336,53 @@ export default function TunnelOverview({
             <div className="p-5 bg-white dark:bg-neutral-900 border border-gray-200 dark:border-neutral-800 rounded-xl space-y-4">
               <h3 className="font-semibold text-sm text-gray-900 dark:text-white">{t("connectionParams")}</h3>
               <div className="grid grid-cols-2 gap-4 text-xs">
-                <div className="flex justify-between py-1.5 border-b border-gray-100 dark:border-neutral-850">
-                  <span className="text-gray-500 dark:text-neutral-400">{t("host")}:</span>
-                  <span className="font-semibold text-gray-800 dark:text-neutral-200">{tunnel.sshHost}:{tunnel.sshPort}</span>
-                </div>
-                <div className="flex justify-between py-1.5 border-b border-gray-100 dark:border-neutral-850">
-                  <span className="text-gray-500 dark:text-neutral-400">{t("user")}:</span>
-                  <span className="font-semibold text-gray-800 dark:text-neutral-200">{tunnel.sshUser}</span>
-                </div>
-                <div className="flex justify-between py-1.5 border-b border-gray-100 dark:border-neutral-850">
-                  <span className="text-gray-500 dark:text-neutral-400">{t("localBind")}:</span>
-                  <span className="font-semibold text-gray-800 dark:text-neutral-200">{tunnel.localHost || "127.0.0.1"}:{tunnel.localPort}</span>
-                </div>
-                <div className="flex justify-between py-1.5 border-b border-gray-100 dark:border-neutral-850">
-                  <span className="text-gray-500 dark:text-neutral-400">{t("forwardingType")}:</span>
-                  <span className="font-semibold text-gray-800 dark:text-neutral-200 uppercase">
-                    {tunnel.tunnelType === "socks5" ? t("socks5Forward") : (tunnel.tunnelType === "local" ? t("localForward") : t("remoteForward"))}
-                  </span>
-                </div>
+                {(() => {
+                  const items = [
+                    { label: t("host"), value: `${tunnel.sshHost}:${tunnel.sshPort}` },
+                    { label: t("user"), value: tunnel.sshUser },
+                  ];
+
+                  if (tunnel.tunnelType === "local") {
+                    items.push(
+                      { label: t("localListener"), value: `${tunnel.localHost || "127.0.0.1"}:${tunnel.localPort}` },
+                      { label: t("remoteDest"), value: `${tunnel.remoteHost}:${tunnel.remotePort}` }
+                    );
+                  } else if (tunnel.tunnelType === "remote") {
+                    items.push(
+                      { label: t("remoteListener"), value: `${tunnel.localHost || "127.0.0.1"}:${tunnel.localPort}` },
+                      { label: t("localDest"), value: `${tunnel.remoteHost || "127.0.0.1"}:${tunnel.remotePort}` }
+                    );
+                  } else {
+                    // socks5
+                    items.push(
+                      { label: t("localListener"), value: `${tunnel.localHost || "127.0.0.1"}:${tunnel.localPort}` },
+                      { label: t("dynamicRouting"), value: t("socks5Forward") }
+                    );
+                  }
+
+                  items.push(
+                    {
+                      label: t("forwardingType"),
+                      value: tunnel.tunnelType === "socks5"
+                        ? t("socks5Forward")
+                        : (tunnel.tunnelType === "local" ? t("localForward") : t("remoteForward"))
+                    },
+                    {
+                      label: t("autoReconnect"),
+                      value: tunnel.autoReconnect
+                        ? `${t("enabled")} (${tunnel.retryInterval}s)`
+                        : t("disabled")
+                    }
+                  );
+
+                  return items.map((item, idx) => (
+                    <div key={idx} className="flex justify-between py-1.5 border-b border-gray-100 dark:border-neutral-850">
+                      <span className="text-gray-500 dark:text-neutral-400">{item.label}:</span>
+                      <span className="font-semibold text-gray-800 dark:text-neutral-200">{item.value}</span>
+                    </div>
+                  ));
+                })()}
+
                 {tunnel.sshIdentityFile && (
                   <div className="flex justify-between py-1.5 border-b border-gray-100 dark:border-neutral-850 col-span-2">
                     <span className="text-gray-500 dark:text-neutral-400">{t("privateKey")}:</span>
@@ -385,56 +419,7 @@ export default function TunnelOverview({
           </div>
         )}
 
-        {/* SETTINGS TAB PANEL (EDIT DIRECT) */}
-        {activeTab === "settings" && (
-          <div className="bg-white dark:bg-neutral-900 border border-gray-200 dark:border-neutral-800 rounded-xl p-6 space-y-6 max-w-2xl">
-            <div className="flex items-center justify-between border-b border-gray-200 dark:border-neutral-800 pb-3">
-              <div>
-                <h3 className="font-semibold text-sm text-gray-900 dark:text-white">{t("tabSettings")}</h3>
-                <p className="text-[10px] text-gray-400 dark:text-neutral-500">Modify connection configurations or delete the tunnel completely.</p>
-              </div>
-              <button
-                onClick={() => setIsEditing(true)}
-                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md text-xs font-semibold transition cursor-pointer"
-              >
-                {t("tabSettings")}
-              </button>
-            </div>
 
-            <div className="space-y-4">
-              <div className="p-4 border border-red-100 dark:border-red-950 bg-red-50/20 dark:bg-red-950/10 rounded-lg flex items-center justify-between">
-                <div>
-                  <span className="font-semibold text-xs text-red-800 dark:text-red-300 block mb-0.5">Danger Zone</span>
-                  <span className="text-[10px] text-gray-500 dark:text-neutral-400">Deleting a tunnel is permanent. Running connections will be terminated immediately.</span>
-                </div>
-                <button
-                  onClick={() => {
-                    if (confirm(t("btnDeleteConfirm"))) {
-                      onDeleteTunnel(tunnel.id);
-                    }
-                  }}
-                  className="px-3 py-1.5 bg-red-600 hover:bg-red-750 text-white rounded-md text-xs font-semibold transition cursor-pointer"
-                >
-                  {t("btnDelete")}
-                </button>
-              </div>
-            </div>
-
-            {/* Launch Editing Modal */}
-            {isEditing && (
-              <TunnelForm
-                tunnel={tunnel}
-                groups={groups}
-                tunnels={tunnels}
-                onSave={(t) => {
-                  onSaveTunnel(t);
-                  setIsEditing(false);
-                }}
-                onCancel={() => setIsEditing(false)}
-              />
-            )}
-          </div>
-        )}
 
       </div>
     </div>

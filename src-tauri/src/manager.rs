@@ -19,11 +19,9 @@ pub struct StatusPayload {
 pub struct ActiveTunnel {
     pub tunnel: Tunnel,
     pub worker: TunnelWorker,
-    pub session: ssh2::Session,
     pub status: TunnelStatus,
     pub log_channel: Channel<String>,
-    // Underlying TCP connections and bastion kept alive in SshSession
-    _ssh_session: SshSession,
+    ssh_session: SshSession,
 }
 
 pub struct TunnelManager {
@@ -107,22 +105,20 @@ impl TunnelManager {
             let log_ch = log_channel.clone();
             let _ = log_ch.send("[INFO] Establishing SSH connection...".to_string());
 
-            let conn_res = tokio::task::spawn_blocking(move || {
-                SshSession::connect(
-                    &t_clone.ssh_host,
-                    t_clone.ssh_port,
-                    &t_clone.ssh_user,
-                    t_clone.ssh_identity_file.as_deref(),
-                    passphrase_conn.as_deref(),
-                    "trustPermanently", // Default verify policy: auto-add on first connect
-                    jump_config.as_ref(),
-                )
-            })
+            let conn_res = SshSession::connect(
+                &t_clone.ssh_host,
+                t_clone.ssh_port,
+                &t_clone.ssh_user,
+                t_clone.ssh_identity_file.as_deref(),
+                passphrase_conn.as_deref(),
+                "trustPermanently", // Default verify policy: auto-add on first connect
+                jump_config.as_ref(),
+            )
             .await;
 
             let ssh_session = match conn_res {
-                Ok(Ok(sess)) => sess,
-                Ok(Err(err_msg)) => {
+                Ok(sess) => sess,
+                Err(err_msg) => {
                     let _ = log_ch.send(format!("[ERROR] Connection failed: {}", err_msg));
                     let _ = logger.log(
                         Some(tunnel_id.clone()),
@@ -148,43 +144,42 @@ impl TunnelManager {
                     }
                     return;
                 }
-                Err(join_err) => {
-                    let err_msg = format!("Task join error: {}", join_err);
-                    let _ = log_ch.send(format!("[ERROR] {}", err_msg));
-                    emit_status(&app_handle, &tunnel_id, TunnelStatus::Failed, Some(err_msg));
-                    return;
-                }
             };
 
             // Start forwarder worker
             let _ =
                 log_ch.send("[INFO] SSH Session authenticated. Spawning listeners...".to_string());
-            let sess_clone = ssh_session.session.clone();
+            let ssh_handle = ssh_session.handle();
+            let mut ssh_session = ssh_session;
+            let forwarded_rx = ssh_session.take_forwarded_receiver();
 
-            let worker = match TunnelWorker::start(tunnel.clone(), sess_clone, log_ch.clone()) {
-                Ok(w) => w,
-                Err(e) => {
-                    let err_msg = format!("Failed to start forwarding listeners: {}", e);
-                    let _ = log_ch.send(format!("[ERROR] {}", err_msg));
-                    let _ = logger.log(
-                        Some(tunnel_id.clone()),
-                        Some(tunnel.name.clone()),
-                        EventType::Failed,
-                        err_msg.clone(),
-                    );
-                    emit_status(&app_handle, &tunnel_id, TunnelStatus::Failed, Some(err_msg));
-                    return;
-                }
-            };
+            let worker =
+                match TunnelWorker::start(tunnel.clone(), ssh_handle, forwarded_rx, log_ch.clone())
+                    .await
+                {
+                    Ok(w) => w,
+                    Err(e) => {
+                        let err_msg = format!("Failed to start forwarding listeners: {}", e);
+                        let _ = log_ch.send(format!("[ERROR] {}", err_msg));
+                        let _ = logger.log(
+                            Some(tunnel_id.clone()),
+                            Some(tunnel.name.clone()),
+                            EventType::Failed,
+                            err_msg.clone(),
+                        );
+                        emit_status(&app_handle, &tunnel_id, TunnelStatus::Failed, Some(err_msg));
+                        ssh_session.disconnect().await;
+                        return;
+                    }
+                };
 
             // Register active tunnel
             let active = ActiveTunnel {
                 tunnel: tunnel.clone(),
                 worker,
-                session: ssh_session.session.clone(),
                 status: TunnelStatus::Running,
                 log_channel: log_ch,
-                _ssh_session: ssh_session,
+                ssh_session,
             };
 
             {
@@ -215,19 +210,14 @@ impl TunnelManager {
             task.abort();
         }
 
-        if let Some(active) = self.active_tunnels.remove(tunnel_id) {
+        if let Some(mut active) = self.active_tunnels.remove(tunnel_id) {
             let name = active.tunnel.name.clone();
             let _ = active
                 .log_channel
                 .send("[INFO] Stopping tunnel listeners...".to_string());
 
-            // Force the SSH session to close so blocking remote-forward accepts are released.
-            let _ = active
-                .session
-                .disconnect(None, "Tunnel stopped by user", None);
-
-            // Stops forwarding workers and drops SSH session
-            active.worker.stop();
+            active.worker.stop().await;
+            active.ssh_session.disconnect().await;
             let _ = logger.log(
                 Some(tunnel_id.to_string()),
                 Some(name),
@@ -346,8 +336,7 @@ impl TunnelManager {
                 {
                     let manager = m_state.lock().await;
                     if let Some(active) = manager.active_tunnels.get(&tunnel_id) {
-                        // Check if session is still authenticated/active
-                        if !active.session.authenticated() {
+                        if !active.ssh_session.is_alive().await {
                             is_disconnected = true;
                         }
                     } else {
@@ -360,8 +349,9 @@ impl TunnelManager {
                     // Stop the disconnected tunnel
                     let mut manager = m_state.lock().await;
                     let log_channel =
-                        if let Some(active) = manager.active_tunnels.remove(&tunnel_id) {
-                            active.worker.stop();
+                        if let Some(mut active) = manager.active_tunnels.remove(&tunnel_id) {
+                            active.worker.stop().await;
+                            active.ssh_session.disconnect().await;
                             Some(active.log_channel)
                         } else {
                             None

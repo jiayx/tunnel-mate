@@ -52,9 +52,7 @@ async fn test_connection(
     tunnel: Tunnel,
     passphrase: Option<String>,
 ) -> Result<Vec<DiagnosticStep>, String> {
-    tokio::task::spawn_blocking(move || Ok(run_diagnostics(&tunnel, passphrase.as_deref())))
-        .await
-        .map_err(|e| format!("Failed to join diagnostics thread: {}", e))?
+    Ok(run_diagnostics(&tunnel, passphrase.as_deref()).await)
 }
 
 #[tauri::command]
@@ -77,7 +75,11 @@ async fn start_tunnel(
 }
 
 #[tauri::command]
-async fn stop_tunnel(app: AppHandle, state: State<'_, TunnelState>, tunnel_id: String) -> Result<(), String> {
+async fn stop_tunnel(
+    app: AppHandle,
+    state: State<'_, TunnelState>,
+    tunnel_id: String,
+) -> Result<(), String> {
     let mut manager = state.0.lock().await;
     manager.stop_tunnel(&app, &tunnel_id).await
 }

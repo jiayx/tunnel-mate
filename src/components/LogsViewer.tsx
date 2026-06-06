@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Copy, Trash2, Download, Search, AlertCircle } from "lucide-react";
 import { useLanguage } from "../lib/i18n";
+import { CompositionInput } from "./CompositionInput";
 
 interface LogsViewerProps {
   tunnelId: string;
@@ -92,11 +93,11 @@ export default function LogsViewer({
           {/* Search */}
           <div className="relative">
             <Search className="w-3.5 h-3.5 absolute left-2 top-2 text-gray-500" />
-            <input
+            <CompositionInput
               type="text"
               placeholder={t("logsSearchPlaceholder")}
               value={filterText}
-              onChange={(e) => setFilterText(e.target.value)}
+              onValueChange={setFilterText}
               className="pl-7 pr-3 py-1 bg-neutral-950 border border-neutral-800 rounded text-[10px] focus:outline-none focus:ring-1 focus:ring-indigo-600 w-36 text-white"
             />
           </div>

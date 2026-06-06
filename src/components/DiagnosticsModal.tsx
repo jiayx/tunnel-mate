@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { X, CheckCircle2, AlertTriangle, XCircle, Loader2, ArrowRight } from "lucide-react";
 import { Tunnel, DiagnosticStep, testConnection } from "../lib/tauri";
 import { useLanguage } from "../lib/i18n";
+import { CompositionInput } from "./CompositionInput";
 
 interface DiagnosticsModalProps {
   tunnel: Tunnel;
@@ -118,11 +119,11 @@ export default function DiagnosticsModal({
                 <span className="text-[10px] text-gray-500 dark:text-neutral-400">{t("passphraseDesc")}</span>
               </div>
               <div className="flex gap-2">
-                <input
+                <CompositionInput
                   type="password"
                   placeholder={t("passphrasePlaceholder")}
                   value={passphrase}
-                  onChange={(e) => setPassphrase(e.target.value)}
+                  onValueChange={setPassphrase}
                   className="flex-1 px-3 py-1.5 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500 text-gray-900 dark:text-white"
                 />
                 <button

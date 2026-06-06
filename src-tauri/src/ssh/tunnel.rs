@@ -1,28 +1,32 @@
 use crate::config::{Tunnel, TunnelType};
+use crate::ssh::engine::{ForwardedTcp, SharedSshHandle};
 use crate::ssh::socks5::negotiate_socks5;
-use ssh2::{Channel, Session};
-use std::io::{ErrorKind, Read, Write};
 use std::net::TcpListener as StdTcpListener;
-use std::net::TcpStream as StdTcpStream;
-use std::sync::Arc;
-use tokio::net::TcpListener as TokioTcpListener;
-use tokio::sync::broadcast;
+use tokio::io::copy_bidirectional;
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::{mpsc, watch};
 
 pub struct TunnelWorker {
-    shutdown_tx: broadcast::Sender<()>,
+    shutdown_tx: watch::Sender<bool>,
+    task: tokio::task::JoinHandle<()>,
+    remote_forward: Option<RemoteForward>,
+}
+
+#[derive(Clone)]
+struct RemoteForward {
+    handle: SharedSshHandle,
+    bind_addr: String,
+    port: u32,
 }
 
 impl TunnelWorker {
-    pub fn start(
+    pub async fn start(
         tunnel: Tunnel,
-        session: Session,
-        log_sender: tauri::ipc::Channel<String>, // We'll use this to stream logs to frontend
+        handle: SharedSshHandle,
+        forwarded_rx: Option<mpsc::UnboundedReceiver<ForwardedTcp>>,
+        log_sender: tauri::ipc::Channel<String>,
     ) -> Result<Self, String> {
-        let (shutdown_tx, _) = broadcast::channel(1);
-        let worker = Self {
-            shutdown_tx: shutdown_tx.clone(),
-        };
-
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let tunnel_type = tunnel.tunnel_type.clone();
         let local_host = tunnel
             .local_host
@@ -31,312 +35,313 @@ impl TunnelWorker {
         let local_port = tunnel.local_port;
         let remote_host = tunnel.remote_host.clone().unwrap_or_default();
         let remote_port = tunnel.remote_port.unwrap_or(0);
-        let mut shutdown_rx = shutdown_tx.subscribe();
 
-        // Spawn based on tunnel type
-        match tunnel_type {
+        let (task, remote_forward) = match tunnel_type {
             TunnelType::Local => {
                 let bind_addr = format!("{}:{}", local_host, local_port);
-                let std_listener = StdTcpListener::bind(&bind_addr)
-                    .map_err(|e| format!("Failed to bind local port {}: {}", bind_addr, e))?;
-                std_listener
-                    .set_nonblocking(true)
-                    .map_err(|e| format!("Failed to set local listener nonblocking: {}", e))?;
-                let listener = TokioTcpListener::from_std(std_listener)
-                    .map_err(|e| format!("Failed to create local listener: {}", e))?;
-
-                tokio::spawn(async move {
-                    let log = log_sender.clone();
-                    let _ = log.send(format!(
-                        "[INFO] Starting Local Forward on {}:{}...",
-                        local_host, local_port
-                    ));
-
-                    let session_arc = Arc::new(session);
-
-                    loop {
-                        tokio::select! {
-                            accept_res = listener.accept() => {
-                                match accept_res {
-                                    Ok((socket, addr)) => {
-                                        let _ = log.send(format!("[INFO] Accepted connection from {}", addr));
-
-                                        let std_socket = match socket.into_std() {
-                                            Ok(s) => s,
-                                            Err(e) => {
-                                                let _ = log.send(format!("[ERROR] Failed to convert socket: {}", e));
-                                                continue;
-                                            }
-                                        };
-
-                                        let sess = session_arc.clone();
-                                        let r_host = remote_host.clone();
-                                        let r_port = remote_port;
-                                        let l_log = log.clone();
-
-                                        std::thread::spawn(move || {
-                                            match sess.channel_direct_tcpip(&r_host, r_port, None) {
-                                                Ok(channel) => {
-                                                    let _ = l_log.send(format!("[INFO] Forwarding to {}:{} via SSH", r_host, r_port));
-                                                    pipe_bidirectional(std_socket, channel);
-                                                }
-                                                Err(e) => {
-                                                    let _ = l_log.send(format!("[ERROR] SSH channel connection failed: {}", e));
-                                                }
-                                            }
-                                        });
-                                    }
-                                    Err(e) => {
-                                        let _ = log.send(format!("[ERROR] Accept error: {}", e));
-                                    }
-                                }
-                            }
-                            _ = shutdown_rx.recv() => {
-                                let _ = log.send("[INFO] Local Forward worker shutting down...".to_string());
-                                break;
-                            }
-                        }
-                    }
-                });
+                let listener = bind_tcp_listener(&bind_addr).await?;
+                let task = tokio::spawn(run_local_forward(
+                    listener,
+                    handle,
+                    remote_host,
+                    remote_port,
+                    shutdown_rx,
+                    log_sender,
+                ));
+                (task, None)
             }
             TunnelType::Socks5 => {
                 let bind_addr = format!("{}:{}", local_host, local_port);
-                let std_listener = StdTcpListener::bind(&bind_addr)
-                    .map_err(|e| format!("Failed to bind local port {}: {}", bind_addr, e))?;
-                std_listener
-                    .set_nonblocking(true)
-                    .map_err(|e| format!("Failed to set SOCKS5 listener nonblocking: {}", e))?;
-                let listener = TokioTcpListener::from_std(std_listener)
-                    .map_err(|e| format!("Failed to create SOCKS5 listener: {}", e))?;
-
-                tokio::spawn(async move {
-                    let log = log_sender.clone();
-                    let _ = log.send(format!(
-                        "[INFO] Starting SOCKS5 Dynamic Proxy on {}:{}...",
-                        local_host, local_port
-                    ));
-
-                    let session_arc = Arc::new(session);
-
-                    loop {
-                        tokio::select! {
-                            accept_res = listener.accept() => {
-                                match accept_res {
-                                    Ok((mut socket, addr)) => {
-                                        let _ = log.send(format!("[INFO] SOCKS5 connection from {}", addr));
-
-                                        let sess = session_arc.clone();
-                                        let l_log = log.clone();
-
-                                        tokio::spawn(async move {
-                                            match negotiate_socks5(&mut socket).await {
-                                                Ok((dest_host, dest_port)) => {
-                                                    let _ = l_log.send(format!("[INFO] SOCKS5 target: {}:{}", dest_host, dest_port));
-
-                                                    if let Ok(std_socket) = socket.into_std() {
-                                                        std::thread::spawn(move || {
-                                                            match sess.channel_direct_tcpip(&dest_host, dest_port, None) {
-                                                                Ok(channel) => {
-                                                                    pipe_bidirectional(std_socket, channel);
-                                                                }
-                                                                Err(e) => {
-                                                                    let _ = l_log.send(format!("[ERROR] SOCKS5 failed to open channel: {}", e));
-                                                                }
-                                                            }
-                                                        });
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    let _ = l_log.send(format!("[ERROR] SOCKS5 negotiation failed: {}", e));
-                                                }
-                                            }
-                                        });
-                                    }
-                                    Err(e) => {
-                                        let _ = log.send(format!("[ERROR] Accept error: {}", e));
-                                    }
-                                }
-                            }
-                            _ = shutdown_rx.recv() => {
-                                let _ = log.send("[INFO] SOCKS5 worker shutting down...".to_string());
-                                break;
-                            }
-                        }
-                    }
-                });
+                let listener = bind_tcp_listener(&bind_addr).await?;
+                let task = tokio::spawn(run_socks5_forward(
+                    listener,
+                    handle,
+                    shutdown_rx,
+                    log_sender,
+                ));
+                (task, None)
             }
             TunnelType::Remote => {
-                let log = log_sender.clone();
-                let _ = log.send(format!(
-                    "[INFO] Requesting Remote Forward to listen on remote port {}...",
-                    remote_port
+                let bind_addr = "127.0.0.1".to_string();
+                let requested_port = remote_port as u32;
+                send_log(
+                    &log_sender,
+                    format!(
+                        "[INFO] Requesting Remote Forward to listen on remote port {}...",
+                        requested_port
+                    ),
+                );
+
+                let allocated_port = handle
+                    .lock()
+                    .await
+                    .tcpip_forward(bind_addr.clone(), requested_port)
+                    .await
+                    .map_err(|e| format!("Remote forward listen request failed: {}", e))?;
+                let port = if requested_port == 0 {
+                    allocated_port
+                } else {
+                    requested_port
+                };
+                let forwarded_rx = forwarded_rx
+                    .ok_or_else(|| "Remote forward receiver is unavailable".to_string())?;
+                let task = tokio::spawn(run_remote_forward(
+                    forwarded_rx,
+                    local_host,
+                    local_port,
+                    port,
+                    shutdown_rx,
+                    log_sender,
                 ));
-
-                // Request remote forward
-                let (mut listener, _) =
-                    match session.channel_forward_listen(remote_port, None, None) {
-                        Ok(l) => l,
-                        Err(e) => {
-                            let _ = log.send(format!(
-                                "[ERROR] Remote forward listen request failed: {}",
-                                e
-                            ));
-                            return Err(format!("Remote forward listen request failed: {}", e));
-                        }
-                    };
-
-                session.set_blocking(false);
-                let session_arc = Arc::new(session);
-
-                std::thread::spawn(move || {
-                    let _ = log.send(
-                        "[INFO] Remote Forward listener started on remote SSH server".to_string(),
-                    );
-
-                    loop {
-                        // Check shutdown signal
-                        if shutdown_rx.try_recv().is_ok() {
-                            let _ = log
-                                .send("[INFO] Remote Forward worker shutting down...".to_string());
-                            break;
-                        }
-
-                        match listener.accept() {
-                            Ok(channel) => {
-                                let _ = log.send(format!(
-                                    "[INFO] Received remote connection request on port {}",
-                                    remote_port
-                                ));
-
-                                let l_host = local_host.clone();
-                                let l_port = local_port;
-                                let l_log = log.clone();
-
-                                std::thread::spawn(move || {
-                                    match StdTcpStream::connect(format!("{}:{}", l_host, l_port)) {
-                                        Ok(local_stream) => {
-                                            let _ = l_log.send(format!(
-                                                "[INFO] Connected to local forward target {}:{}",
-                                                l_host, l_port
-                                            ));
-                                            pipe_bidirectional(local_stream, channel);
-                                        }
-                                        Err(e) => {
-                                            let _ = l_log.send(format!("[ERROR] Failed to connect to local target {}:{}: {}", l_host, l_port, e));
-                                        }
-                                    }
-                                });
-                            }
-                            Err(e) => {
-                                let err_msg = e.to_string();
-                                let io_err: std::io::Error = e.into();
-                                if io_err.kind() == ErrorKind::WouldBlock {
-                                    std::thread::sleep(std::time::Duration::from_millis(50));
-                                    continue;
-                                }
-
-                                // If the session is disconnected, break
-                                if !session_arc.authenticated() {
-                                    let _ = log.send("[INFO] SSH Session disconnected. Remote Forward worker exiting.".to_string());
-                                    break;
-                                }
-                                let _ = log.send(format!("[ERROR] Remote Forward accept error: {}", err_msg));
-                                // Small sleep to prevent tight looping on non-fatal errors
-                                std::thread::sleep(std::time::Duration::from_millis(100));
-                            }
-                        }
-                    }
-                });
+                (
+                    task,
+                    Some(RemoteForward {
+                        handle,
+                        bind_addr,
+                        port,
+                    }),
+                )
             }
-        }
+        };
 
-        Ok(worker)
+        Ok(Self {
+            shutdown_tx,
+            task,
+            remote_forward,
+        })
     }
 
-    pub fn stop(self) {
-        let _ = self.shutdown_tx.send(());
+    pub async fn stop(self) {
+        if let Some(remote) = self.remote_forward {
+            let _ = remote
+                .handle
+                .lock()
+                .await
+                .cancel_tcpip_forward(remote.bind_addr, remote.port)
+                .await;
+        }
+        let _ = self.shutdown_tx.send(true);
+        self.task.abort();
+        let _ = self.task.await;
     }
 }
 
-fn pipe_bidirectional(mut socket: StdTcpStream, mut channel: Channel) {
-    let mut socket_clone = match socket.try_clone() {
-        Ok(s) => s,
-        Err(_) => return,
-    };
-    let mut channel_clone = channel.clone();
+async fn bind_tcp_listener(bind_addr: &str) -> Result<TcpListener, String> {
+    let std_listener = StdTcpListener::bind(bind_addr)
+        .map_err(|e| format!("Failed to bind local port {}: {}", bind_addr, e))?;
+    std_listener
+        .set_nonblocking(true)
+        .map_err(|e| format!("Failed to set listener nonblocking: {}", e))?;
+    TcpListener::from_std(std_listener).map_err(|e| format!("Failed to create listener: {}", e))
+}
 
-    // Spawn thread for one direction: socket -> channel
-    std::thread::spawn(move || {
-        let mut buffer = [0u8; 16384];
-        loop {
-            match socket_clone.read(&mut buffer) {
-                Ok(0) => {
-                    if channel_clone.eof() {
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                }
-                Ok(n) => {
-                    if write_all_retry(&mut channel_clone, &buffer[..n]).is_err() {
-                        break;
-                    }
-                }
-                Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                }
-                Err(_) => break,
-            }
-        }
-        channel_clone.close().ok();
-    });
+async fn run_local_forward(
+    listener: TcpListener,
+    handle: SharedSshHandle,
+    remote_host: String,
+    remote_port: u16,
+    mut shutdown_rx: watch::Receiver<bool>,
+    log: tauri::ipc::Channel<String>,
+) {
+    send_log(
+        &log,
+        format!(
+            "[INFO] Starting Local Forward to {}:{}...",
+            remote_host, remote_port
+        ),
+    );
 
-    // Handle other direction in current thread: channel -> socket
-    let mut buffer = [0u8; 16384];
     loop {
-        match channel.read(&mut buffer) {
-            Ok(0) => {
-                if channel.eof() {
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            Ok(n) => {
-                if write_all_retry(&mut socket, &buffer[..n]).is_err() {
-                    break;
+        tokio::select! {
+            res = listener.accept() => {
+                match res {
+                    Ok((socket, addr)) => {
+                        send_log(&log, format!("[INFO] Accepted connection from {}", addr));
+                        tokio::spawn(pipe_local_connection(socket, handle.clone(), remote_host.clone(), remote_port, log.clone()));
+                    }
+                    Err(e) => send_log(&log, format!("[ERROR] Accept error: {}", e)),
                 }
             }
-            Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                std::thread::sleep(std::time::Duration::from_millis(10));
+            _ = shutdown_rx.changed() => {
+                send_log(&log, "[INFO] Local Forward worker shutting down...".to_string());
+                break;
             }
-            Err(_) => break,
         }
     }
-    socket.shutdown(std::net::Shutdown::Both).ok();
 }
 
-fn write_all_retry<W: Write>(writer: &mut W, mut buf: &[u8]) -> std::io::Result<()> {
-    let mut zero_writes = 0;
-    while !buf.is_empty() {
-        match writer.write(buf) {
-            Ok(0) => {
-                zero_writes += 1;
-                if zero_writes > 1000 {
-                    return Err(std::io::Error::new(
-                        ErrorKind::WriteZero,
-                        "failed to write forwarded data",
-                    ));
+async fn pipe_local_connection(
+    mut socket: TcpStream,
+    handle: SharedSshHandle,
+    remote_host: String,
+    remote_port: u16,
+    log: tauri::ipc::Channel<String>,
+) {
+    match handle
+        .lock()
+        .await
+        .channel_open_direct_tcpip(remote_host.clone(), remote_port as u32, "127.0.0.1", 0)
+        .await
+    {
+        Ok(channel) => {
+            send_log(
+                &log,
+                format!(
+                    "[INFO] Forwarding to {}:{} via SSH",
+                    remote_host, remote_port
+                ),
+            );
+            let mut stream = channel.into_stream();
+            if let Err(e) = copy_bidirectional(&mut socket, &mut stream).await {
+                send_log(&log, format!("[ERROR] Forwarding stream failed: {}", e));
+            }
+        }
+        Err(e) => send_log(
+            &log,
+            format!("[ERROR] SSH channel connection failed: {}", e),
+        ),
+    }
+}
+
+async fn run_socks5_forward(
+    listener: TcpListener,
+    handle: SharedSshHandle,
+    mut shutdown_rx: watch::Receiver<bool>,
+    log: tauri::ipc::Channel<String>,
+) {
+    send_log(&log, "[INFO] Starting SOCKS5 Dynamic Proxy...".to_string());
+
+    loop {
+        tokio::select! {
+            res = listener.accept() => {
+                match res {
+                    Ok((mut socket, addr)) => {
+                        send_log(&log, format!("[INFO] SOCKS5 connection from {}", addr));
+                        let task_handle = handle.clone();
+                        let task_log = log.clone();
+                        tokio::spawn(async move {
+                            match negotiate_socks5(&mut socket).await {
+                                Ok((dest_host, dest_port)) => {
+                                    pipe_local_connection(socket, task_handle, dest_host, dest_port, task_log).await;
+                                }
+                                Err(e) => send_log(&task_log, format!("[ERROR] SOCKS5 negotiation failed: {}", e)),
+                            }
+                        });
+                    }
+                    Err(e) => send_log(&log, format!("[ERROR] Accept error: {}", e)),
                 }
-                std::thread::sleep(std::time::Duration::from_millis(10));
             }
-            Ok(n) => {
-                zero_writes = 0;
-                buf = &buf[n..];
+            _ = shutdown_rx.changed() => {
+                send_log(&log, "[INFO] SOCKS5 worker shutting down...".to_string());
+                break;
             }
-            Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            Err(e) => return Err(e),
         }
     }
-    Ok(())
+}
+
+async fn run_remote_forward(
+    mut forwarded_rx: mpsc::UnboundedReceiver<ForwardedTcp>,
+    local_host: String,
+    local_port: u16,
+    remote_port: u32,
+    mut shutdown_rx: watch::Receiver<bool>,
+    log: tauri::ipc::Channel<String>,
+) {
+    send_log(
+        &log,
+        "[INFO] Remote Forward listener started on remote SSH server".to_string(),
+    );
+
+    loop {
+        tokio::select! {
+            Some(forwarded) = forwarded_rx.recv() => {
+                let target = format!("{}:{}", local_host, local_port);
+                send_log(
+                    &log,
+                    format!(
+                        "[INFO] Received remote connection on {}:{} from {}:{}",
+                        forwarded.connected_address,
+                        forwarded.connected_port,
+                        forwarded.originator_address,
+                        forwarded.originator_port
+                    ),
+                );
+                tokio::spawn(pipe_remote_connection(forwarded, target, log.clone()));
+            }
+            _ = shutdown_rx.changed() => {
+                send_log(&log, "[INFO] Remote Forward worker shutting down...".to_string());
+                break;
+            }
+            else => {
+                send_log(&log, format!("[INFO] Remote Forward on port {} closed", remote_port));
+                break;
+            }
+        }
+    }
+}
+
+async fn pipe_remote_connection(
+    forwarded: ForwardedTcp,
+    target: String,
+    log: tauri::ipc::Channel<String>,
+) {
+    match TcpStream::connect(&target).await {
+        Ok(mut local_stream) => {
+            send_log(
+                &log,
+                format!("[INFO] Connected to local forward target {}", target),
+            );
+            let mut ssh_stream = forwarded.channel.into_stream();
+            if let Err(e) = copy_bidirectional(&mut ssh_stream, &mut local_stream).await {
+                send_log(
+                    &log,
+                    format!("[ERROR] Remote forwarding stream failed: {}", e),
+                );
+            }
+        }
+        Err(e) => send_log(
+            &log,
+            format!(
+                "[ERROR] Failed to connect to local target {}: {}",
+                target, e
+            ),
+        ),
+    }
+}
+
+fn send_log(log: &tauri::ipc::Channel<String>, message: String) {
+    let _ = log.send(message);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::future::Future;
+
+    async fn assert_send<F: Future + Send>(future: F) -> F::Output {
+        future.await
+    }
+
+    #[tokio::test]
+    async fn bind_tcp_listener_reports_occupied_port() {
+        let occupied = StdTcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = occupied.local_addr().unwrap().to_string();
+
+        let err = bind_tcp_listener(&addr).await.unwrap_err();
+
+        assert!(err.contains("Failed to bind local port"));
+        assert!(err.contains(&addr));
+    }
+
+    #[tokio::test]
+    async fn worker_stop_future_is_send() {
+        let (shutdown_tx, _shutdown_rx) = watch::channel(false);
+        let worker = TunnelWorker {
+            shutdown_tx,
+            task: tokio::spawn(async {}),
+            remote_forward: None,
+        };
+
+        assert_send(worker.stop()).await;
+    }
 }

@@ -126,10 +126,6 @@ impl ConfigStore {
         self.base_path.join("events.json")
     }
 
-    pub fn get_known_hosts_path(&self) -> PathBuf {
-        self.base_path.join("known_hosts")
-    }
-
     pub fn load_config(&self) -> Result<AppConfig, String> {
         let config_path = self.get_config_path();
         if !config_path.exists() {

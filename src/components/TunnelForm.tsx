@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { X, Key, Download, ChevronDown, Info, Server, Shuffle, GitBranch, RotateCcw } from "lucide-react";
 import { Group, Tunnel, TunnelType, SshHostConfig, importSshConfig } from "../lib/tauri";
 import { useLanguage } from "../lib/i18n";
+import { CompositionInput, CompositionTextarea } from "./CompositionInput";
 
 interface TunnelFormProps {
   tunnel: Tunnel | null; // null means creating new tunnel
@@ -349,11 +350,11 @@ export default function TunnelForm({
             <div className="space-y-4">
               <div>
                 <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">{t("tunnelName")}</label>
-                <input
+                <CompositionInput
                   type="text"
                   placeholder="e.g., Production DB"
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  onValueChange={setName}
                   className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500"
                 />
                 {errors.name && <p className="text-[10px] text-red-500 mt-1">{errors.name}</p>}
@@ -361,10 +362,10 @@ export default function TunnelForm({
 
               <div>
                 <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">{t("descriptionOpt")}</label>
-                <textarea
+                <CompositionTextarea
                   placeholder="Notes about this tunnel connection..."
                   value={description}
-                  onChange={(e) => setDescription(e.target.value)}
+                  onValueChange={setDescription}
                   rows={2}
                   className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500"
                 />
@@ -412,11 +413,11 @@ export default function TunnelForm({
               <div className="grid grid-cols-4 gap-3">
                 <div className="col-span-3">
                   <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">{t("sshHost")}</label>
-                  <input
+                  <CompositionInput
                     type="text"
                     placeholder="ssh.example.com or 192.168.1.1"
                     value={sshHost}
-                    onChange={(e) => setSshHost(e.target.value)}
+                    onValueChange={setSshHost}
                     className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500"
                   />
                   {errors.sshHost && <p className="text-[10px] text-red-500 mt-1">{errors.sshHost}</p>}
@@ -435,11 +436,11 @@ export default function TunnelForm({
 
               <div>
                 <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">{t("sshUser")}</label>
-                <input
+                <CompositionInput
                   type="text"
                   placeholder="e.g., root, ubuntu"
                   value={sshUser}
-                  onChange={(e) => setSshUser(e.target.value)}
+                  onValueChange={setSshUser}
                   className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500"
                 />
                 {errors.sshUser && <p className="text-[10px] text-red-500 mt-1">{errors.sshUser}</p>}
@@ -448,11 +449,11 @@ export default function TunnelForm({
               <div>
                 <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">{t("privateKeyPath")}</label>
                 <div className="relative">
-                  <input
+                  <CompositionInput
                     type="text"
                     placeholder="e.g., /Users/username/.ssh/id_rsa"
                     value={sshIdentityFile}
-                    onChange={(e) => setSshIdentityFile(e.target.value)}
+                    onValueChange={setSshIdentityFile}
                     className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500"
                   />
                   <Key className="w-3.5 h-3.5 absolute right-3 top-3 text-gray-400 dark:text-neutral-500" />
@@ -501,7 +502,7 @@ export default function TunnelForm({
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">监听地址</label>
-                        <input type="text" value={localHost} onChange={(e) => setLocalHost(e.target.value)}
+                        <CompositionInput type="text" value={localHost} onValueChange={setLocalHost}
                           className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500" />
                         <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-0.5">通常保持 127.0.0.1 不变</p>
                       </div>
@@ -522,8 +523,8 @@ export default function TunnelForm({
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">目标主机 <span className="text-red-400">*</span></label>
-                        <input type="text" placeholder="如 localhost 或 db.internal" value={remoteHost}
-                          onChange={(e) => setRemoteHost(e.target.value)}
+                        <CompositionInput type="text" placeholder="如 localhost 或 db.internal" value={remoteHost}
+                          onValueChange={setRemoteHost}
                           className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500" />
                         <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-0.5">SSH 服务器能访问到的主机</p>
                         {errors.remoteHost && <p className="text-[10px] text-red-500 mt-1">{errors.remoteHost}</p>}
@@ -558,7 +559,7 @@ export default function TunnelForm({
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">服务器绑定地址</label>
-                        <input type="text" value={localHost} onChange={(e) => setLocalHost(e.target.value)}
+                        <CompositionInput type="text" value={localHost} onValueChange={setLocalHost}
                           className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500" />
                         <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-0.5">SSH 服务器上绑定的地址</p>
                       </div>
@@ -579,8 +580,8 @@ export default function TunnelForm({
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">本机地址</label>
-                        <input type="text" placeholder="如 localhost" value={remoteHost}
-                          onChange={(e) => setRemoteHost(e.target.value)}
+                        <CompositionInput type="text" placeholder="如 localhost" value={remoteHost}
+                          onValueChange={setRemoteHost}
                           className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500" />
                         <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-0.5">你本机上的服务地址</p>
                       </div>
@@ -612,7 +613,7 @@ export default function TunnelForm({
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">监听地址</label>
-                        <input type="text" value={localHost} onChange={(e) => setLocalHost(e.target.value)}
+                        <CompositionInput type="text" value={localHost} onValueChange={setLocalHost}
                           className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500" />
                         <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-0.5">通常保持 127.0.0.1 不变</p>
                       </div>
@@ -686,11 +687,11 @@ export default function TunnelForm({
                   <div className="grid grid-cols-4 gap-3">
                     <div className="col-span-3">
                       <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">{t("bastion")}</label>
-                      <input
+                      <CompositionInput
                         type="text"
                         placeholder="bastion.example.com"
                         value={jumpHost}
-                        onChange={(e) => setJumpHost(e.target.value)}
+                        onValueChange={setJumpHost}
                         className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500"
                       />
                       {errors.jumpHost && <p className="text-[10px] text-red-500 mt-1">{errors.jumpHost}</p>}
@@ -710,21 +711,21 @@ export default function TunnelForm({
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">{t("user")}</label>
-                      <input
+                      <CompositionInput
                         type="text"
                         placeholder="e.g., ec2-user"
                         value={jumpUser}
-                        onChange={(e) => setJumpUser(e.target.value)}
+                        onValueChange={setJumpUser}
                         className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500"
                       />
                     </div>
                     <div>
                       <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">{t("privateKey")}</label>
-                      <input
+                      <CompositionInput
                         type="text"
                         placeholder="e.g., /path/to/bastion_key"
                         value={jumpIdentityFile}
-                        onChange={(e) => setJumpIdentityFile(e.target.value)}
+                        onValueChange={setJumpIdentityFile}
                         className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500"
                       />
                     </div>
