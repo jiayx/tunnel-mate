@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { 
   Search, Plus, Folder, FolderOpen, Play, Square, 
   Activity, ChevronDown, ChevronRight, Settings,
@@ -26,6 +26,7 @@ interface SidebarProps {
   onDeleteTunnel: (id: string) => void;
   onTestConnection: (id: string) => void;
   onEditTunnel: (id: string) => void;
+  onMoveTunnelToGroup: (tunnelId: string, groupId: string) => void;
 }
 
 type MenuType = "group" | "tunnel" | "list";
@@ -48,10 +49,26 @@ export default function Sidebar({
   onDeleteTunnel,
   onTestConnection,
   onEditTunnel,
+  onMoveTunnelToGroup,
 }: SidebarProps) {
   const { t } = useLanguage();
   const [searchQuery, setSearchQuery] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const [draggedTunnelId, setDraggedTunnelId] = useState<string | null>(null);
+  const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null);
+  const [dragPreview, setDragPreview] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const pointerDragRef = useRef<{
+    tunnelId: string;
+    startX: number;
+    startY: number;
+    offsetX: number;
+    offsetY: number;
+    width: number;
+    height: number;
+    active: boolean;
+    targetGroupId: string | null;
+  } | null>(null);
+  const suppressTunnelClickRef = useRef(false);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -66,6 +83,14 @@ export default function Sidebar({
     return () => {
       window.removeEventListener("click", handleCloseMenu);
       window.removeEventListener("contextmenu", handleCloseMenu);
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      window.removeEventListener("pointermove", handlePointerDragMove);
+      window.removeEventListener("pointerup", handlePointerDragEnd);
+      window.removeEventListener("pointercancel", handlePointerDragCancel);
     };
   }, []);
 
@@ -143,6 +168,96 @@ export default function Sidebar({
     setCollapsedGroups(prev => ({ ...prev, [groupId]: !prev[groupId] }));
   };
 
+  const resetPointerDrag = () => {
+    pointerDragRef.current = null;
+    setDraggedTunnelId(null);
+    setDragOverGroupId(null);
+    setDragPreview(null);
+    window.removeEventListener("pointermove", handlePointerDragMove);
+    window.removeEventListener("pointerup", handlePointerDragEnd);
+    window.removeEventListener("pointercancel", handlePointerDragCancel);
+  };
+
+  const handlePointerDragMove = (e: PointerEvent) => {
+    const drag = pointerDragRef.current;
+    if (!drag) return;
+
+    const distance = Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY);
+    if (!drag.active && distance < 5) return;
+
+    if (!drag.active) {
+      drag.active = true;
+      setDraggedTunnelId(drag.tunnelId);
+    }
+
+    setDragPreview({
+      x: e.clientX - drag.offsetX,
+      y: e.clientY - drag.offsetY,
+      width: drag.width,
+      height: drag.height,
+    });
+
+    const element = document.elementFromPoint(e.clientX, e.clientY);
+    const groupElement = element instanceof Element ? element.closest<HTMLElement>("[data-group-id]") : null;
+    const groupId = groupElement?.dataset.groupId || null;
+
+    drag.targetGroupId = groupId;
+    setDragOverGroupId(groupId);
+  };
+
+  const handlePointerDragEnd = (e: PointerEvent) => {
+    const drag = pointerDragRef.current;
+    if (!drag) return;
+
+    const groupId = drag.targetGroupId;
+    const wasActive = drag.active;
+    resetPointerDrag();
+
+    if (!wasActive || !groupId) return;
+
+    suppressTunnelClickRef.current = true;
+    window.setTimeout(() => {
+      suppressTunnelClickRef.current = false;
+    }, 0);
+
+    const tunnel = tunnels.find(t => t.id === drag.tunnelId);
+    if (!tunnel || tunnel.groupId === groupId) return;
+
+    setCollapsedGroups(prev => ({ ...prev, [groupId]: false }));
+    onMoveTunnelToGroup(drag.tunnelId, groupId);
+    e.preventDefault();
+  };
+
+  const handlePointerDragCancel = () => {
+    resetPointerDrag();
+  };
+
+  const handleTunnelPointerDown = (e: React.PointerEvent<HTMLButtonElement>, tunnelId: string) => {
+    if (e.button !== 0) return;
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    pointerDragRef.current = {
+      tunnelId,
+      startX: e.clientX,
+      startY: e.clientY,
+      offsetX: e.clientX - rect.left,
+      offsetY: e.clientY - rect.top,
+      width: rect.width,
+      height: rect.height,
+      active: false,
+      targetGroupId: null,
+    };
+    setContextMenu(null);
+    window.addEventListener("pointermove", handlePointerDragMove);
+    window.addEventListener("pointerup", handlePointerDragEnd);
+    window.addEventListener("pointercancel", handlePointerDragCancel);
+  };
+
+  const handleTunnelClick = (tunnelId: string) => {
+    if (suppressTunnelClickRef.current) return;
+    onSelectTunnel(tunnelId);
+  };
+
   const getStatusColor = (status?: TunnelStatus) => {
     switch (status) {
       case "running": return "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]";
@@ -172,6 +287,8 @@ export default function Sidebar({
       ungroupedTunnels.push(t);
     }
   });
+
+  const draggedTunnel = draggedTunnelId ? tunnels.find(t => t.id === draggedTunnelId) : null;
 
   return (
     <aside className="w-64 flex flex-col h-screen border-r border-gray-200 dark:border-neutral-800 bg-gray-50/80 dark:bg-neutral-900/90 backdrop-blur-md select-none">
@@ -232,15 +349,24 @@ export default function Sidebar({
           {groups.map(g => {
             const isCollapsed = collapsedGroups[g.id];
             const groupTunnels = tunnelsByGroup[g.id] || [];
+            const isDragTarget = dragOverGroupId === g.id;
             
             // Only render group if it matches search query OR has children matching search query
             if (searchQuery && groupTunnels.length === 0) return null;
 
             return (
-              <div key={g.id} className="space-y-0.5">
+              <div
+                key={g.id}
+                data-group-id={g.id}
+                className="space-y-0.5"
+              >
                 <div 
                   onContextMenu={(e) => handleGroupContextMenu(e, g.id)}
-                  className="group/item group-item flex items-center justify-between px-2 py-1 hover:bg-gray-200/55 dark:hover:bg-neutral-855 rounded-md transition text-xs select-none"
+                  className={`group/item group-item flex items-center justify-between px-2 py-1 rounded-md transition text-xs select-none ${
+                    isDragTarget
+                      ? "bg-indigo-50 dark:bg-indigo-950/35 ring-1 ring-indigo-300/80 dark:ring-indigo-700 text-indigo-700 dark:text-indigo-300"
+                      : "hover:bg-gray-200/55 dark:hover:bg-neutral-855"
+                  }`}
                 >
                   <button 
                     onClick={() => toggleGroup(g.id)}
@@ -276,12 +402,16 @@ export default function Sidebar({
                     {groupTunnels.map(t => (
                       <button
                         key={t.id}
-                        onClick={() => onSelectTunnel(t.id)}
+                        onPointerDown={(e) => handleTunnelPointerDown(e, t.id)}
+                        onClick={() => handleTunnelClick(t.id)}
                         onContextMenu={(e) => handleTunnelContextMenu(e, t.id)}
                         className={`w-full tunnel-item flex items-center justify-between px-2.5 py-1.5 rounded-md text-[11px] transition text-left ${
+                          draggedTunnelId === t.id
+                            ? "opacity-50 cursor-grabbing"
+                            :
                           selectedTunnelId === t.id
                             ? "bg-indigo-50/80 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 font-medium"
-                            : "text-gray-600 dark:text-neutral-400 hover:bg-gray-150 dark:hover:bg-neutral-805/40"
+                            : "text-gray-600 dark:text-neutral-400 hover:bg-gray-150 dark:hover:bg-neutral-805/40 cursor-grab"
                         }`}
                       >
                         <div className="flex items-center gap-2 truncate pointer-events-none">
@@ -303,12 +433,16 @@ export default function Sidebar({
           {ungroupedTunnels.map(t => (
             <button
               key={t.id}
-              onClick={() => onSelectTunnel(t.id)}
+              onPointerDown={(e) => handleTunnelPointerDown(e, t.id)}
+              onClick={() => handleTunnelClick(t.id)}
               onContextMenu={(e) => handleTunnelContextMenu(e, t.id)}
               className={`w-full tunnel-item flex items-center justify-between px-3 py-1.5 rounded-md text-xs transition text-left ${
+                draggedTunnelId === t.id
+                  ? "opacity-50 cursor-grabbing"
+                  :
                 selectedTunnelId === t.id
                   ? "bg-indigo-50/80 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 font-medium"
-                  : "text-gray-600 dark:text-neutral-400 hover:bg-gray-100 dark:hover:bg-neutral-800/50"
+                  : "text-gray-600 dark:text-neutral-400 hover:bg-gray-100 dark:hover:bg-neutral-800/50 cursor-grab"
               }`}
             >
               <div className="flex items-center gap-2 truncate pointer-events-none">
@@ -579,6 +713,26 @@ export default function Sidebar({
               </button>
             </>
           )}
+        </div>
+      )}
+
+      {dragPreview && draggedTunnel && (
+        <div
+          style={{
+            left: dragPreview.x,
+            top: dragPreview.y,
+            width: dragPreview.width,
+            minHeight: dragPreview.height,
+          }}
+          className="fixed z-[110] pointer-events-none flex items-center justify-between gap-2 rounded-md border border-gray-200/90 dark:border-neutral-700/90 bg-white/92 dark:bg-neutral-850/92 px-3 py-1.5 text-xs text-gray-800 dark:text-neutral-100 shadow-[0_12px_30px_rgba(15,23,42,0.18)] dark:shadow-[0_12px_30px_rgba(0,0,0,0.45)] backdrop-blur-sm ring-1 ring-white/70 dark:ring-white/5"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <span className={`w-2 h-2 rounded-full shrink-0 ${getStatusColor(statuses[draggedTunnel.id])}`} />
+            <span className="truncate font-medium">{draggedTunnel.name}</span>
+          </div>
+          <span className="shrink-0 text-[9px] uppercase tracking-wider text-gray-400 dark:text-neutral-500">
+            {draggedTunnel.tunnelType === "socks5" ? "S5" : draggedTunnel.tunnelType}
+          </span>
         </div>
       )}
     </aside>

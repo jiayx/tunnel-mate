@@ -291,6 +291,27 @@ function AppContent() {
     }
   };
 
+  const handleMoveTunnelToGroup = async (tunnelId: string, groupId: string) => {
+    const tunnel = config.tunnels.find(t => t.id === tunnelId);
+    const group = config.groups.find(g => g.id === groupId);
+    if (!tunnel || !group || tunnel.groupId === groupId) return;
+
+    const updatedConfig = {
+      ...config,
+      tunnels: config.tunnels.map(t => t.id === tunnelId ? { ...t, groupId } : t),
+    };
+
+    try {
+      await saveConfig(updatedConfig);
+      setConfig(updatedConfig);
+      setSelectedTunnelId(tunnelId);
+      const evs = await getEvents();
+      setEvents(evs);
+    } catch (e) {
+      alert("Failed to move tunnel: " + e);
+    }
+  };
+
   const handleTestConnectionForTunnel = (id: string) => {
     setSelectedTunnelId(id);
     setShowDiagnostics(true);
@@ -325,6 +346,7 @@ function AppContent() {
         onStopTunnel={handleStopTunnel}
         onDeleteTunnel={handleDeleteTunnel}
         onTestConnection={handleTestConnectionForTunnel}
+        onMoveTunnelToGroup={handleMoveTunnelToGroup}
         onEditTunnel={(id) => {
           const tunnel = config.tunnels.find(t => t.id === id) || null;
           setSelectedTunnelId(id);
