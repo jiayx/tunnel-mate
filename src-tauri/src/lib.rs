@@ -14,6 +14,7 @@ use std::sync::Arc;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_dialog::DialogExt;
 use tokio::sync::Mutex;
 
 struct TunnelState(Arc<Mutex<TunnelManager>>);
@@ -47,6 +48,21 @@ fn clear_events() -> Result<(), String> {
 #[tauri::command]
 fn import_ssh_config() -> Result<Vec<SshHostConfig>, String> {
     Ok(parse_ssh_config())
+}
+
+#[tauri::command]
+async fn select_private_key_file(app: AppHandle) -> Result<Option<String>, String> {
+    let mut dialog = app.dialog().file().set_title("Select SSH Private Key");
+
+    if let Some(ssh_dir) = dirs::home_dir().map(|home| home.join(".ssh")) {
+        if ssh_dir.exists() {
+            dialog = dialog.set_directory(ssh_dir);
+        }
+    }
+
+    let selected = dialog.blocking_pick_file();
+
+    Ok(selected.map(|path| path.to_string()))
 }
 
 #[tauri::command]
@@ -155,13 +171,25 @@ pub fn update_tray_menu(app: &AppHandle) {
         let mut menu_items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = Vec::new();
 
         // 1. Title/Header
-        if let Ok(title) = MenuItem::with_id(&app_handle, "tunnels_title", "--- Tunnels ---", false, None::<&str>) {
+        if let Ok(title) = MenuItem::with_id(
+            &app_handle,
+            "tunnels_title",
+            "--- Tunnels ---",
+            false,
+            None::<&str>,
+        ) {
             menu_items.push(Box::new(title));
         }
 
         // 2. Dynamic Tunnel items
         if config.tunnels.is_empty() {
-            if let Ok(empty) = MenuItem::with_id(&app_handle, "tunnels_empty", "No tunnels configured", false, None::<&str>) {
+            if let Ok(empty) = MenuItem::with_id(
+                &app_handle,
+                "tunnels_empty",
+                "No tunnels configured",
+                false,
+                None::<&str>,
+            ) {
                 menu_items.push(Box::new(empty));
             }
         } else {
@@ -174,9 +202,13 @@ pub fn update_tray_menu(app: &AppHandle) {
                     TunnelStatus::Failed => "🔴",
                     TunnelStatus::Stopped => "⚪",
                 };
-                let label = format!("{} {} (Port {})", status_icon, tunnel.name, tunnel.local_port);
+                let label = format!(
+                    "{} {} (Port {})",
+                    status_icon, tunnel.name, tunnel.local_port
+                );
                 let item_id = format!("toggle_{}", tunnel.id);
-                if let Ok(item) = MenuItem::with_id(&app_handle, item_id, label, true, None::<&str>) {
+                if let Ok(item) = MenuItem::with_id(&app_handle, item_id, label, true, None::<&str>)
+                {
                     menu_items.push(Box::new(item));
                 }
             }
@@ -186,10 +218,14 @@ pub fn update_tray_menu(app: &AppHandle) {
         if let Ok(sep1) = tauri::menu::PredefinedMenuItem::separator(&app_handle) {
             menu_items.push(Box::new(sep1));
         }
-        if let Ok(show) = MenuItem::with_id(&app_handle, "show", "Show Main Window", true, None::<&str>) {
+        if let Ok(show) =
+            MenuItem::with_id(&app_handle, "show", "Show Main Window", true, None::<&str>)
+        {
             menu_items.push(Box::new(show));
         }
-        if let Ok(hide) = MenuItem::with_id(&app_handle, "hide", "Hide Main Window", true, None::<&str>) {
+        if let Ok(hide) =
+            MenuItem::with_id(&app_handle, "hide", "Hide Main Window", true, None::<&str>)
+        {
             menu_items.push(Box::new(hide));
         }
         if let Ok(sep2) = tauri::menu::PredefinedMenuItem::separator(&app_handle) {
@@ -218,6 +254,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(TunnelState(manager))
         .invoke_handler(tauri::generate_handler![
             get_config,
@@ -225,6 +262,7 @@ pub fn run() {
             get_events,
             clear_events,
             import_ssh_config,
+            select_private_key_file,
             test_connection,
             start_tunnel,
             stop_tunnel,
@@ -234,8 +272,13 @@ pub fn run() {
         ])
         .setup(|app| {
             let mut tray_builder = TrayIconBuilder::with_id("main-tray");
-            let icon_path = app.path().resolve("icons/trayTemplate.png", tauri::path::BaseDirectory::Resource);
-            let icon = icon_path.ok().and_then(|p| tauri::image::Image::from_path(p).ok());
+            let icon_path = app.path().resolve(
+                "icons/trayTemplate.png",
+                tauri::path::BaseDirectory::Resource,
+            );
+            let icon = icon_path
+                .ok()
+                .and_then(|p| tauri::image::Image::from_path(p).ok());
 
             if let Some(icon) = icon {
                 tray_builder = tray_builder.icon(icon).icon_as_template(true);
@@ -244,6 +287,7 @@ pub fn run() {
             }
 
             let _tray = tray_builder
+                .tooltip("Tunnel Mate")
                 .on_menu_event(|app, event| {
                     let id = event.id().as_ref();
                     if id.starts_with("toggle_") {

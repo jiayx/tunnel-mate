@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { X, Key, Download, ChevronDown, Info, Server, Shuffle, GitBranch, RotateCcw } from "lucide-react";
-import { Group, Tunnel, TunnelType, SshHostConfig, importSshConfig } from "../lib/tauri";
+import { X, Download, ChevronDown, Info, Server, Shuffle, GitBranch, RotateCcw, FolderOpen } from "lucide-react";
+import { Group, Tunnel, TunnelType, SshHostConfig, importSshConfig, selectPrivateKeyFile } from "../lib/tauri";
 import { useLanguage } from "../lib/i18n";
 import { CompositionInput, CompositionTextarea } from "./CompositionInput";
 
@@ -38,12 +38,14 @@ export default function TunnelForm({
   const [sshPort, setSshPort] = useState<number | "">(22);
   const [sshUser, setSshUser] = useState("");
   const [sshIdentityFile, setSshIdentityFile] = useState("");
+  const [sshPassword, setSshPassword] = useState("");
 
   const [jumpHostEnabled, setJumpHostEnabled] = useState(false);
   const [jumpHost, setJumpHost] = useState("");
   const [jumpPort, setJumpPort] = useState<number | "">(22);
   const [jumpUser, setJumpUser] = useState("");
   const [jumpIdentityFile, setJumpIdentityFile] = useState("");
+  const [jumpPassword, setJumpPassword] = useState("");
 
   const [localHost, setLocalHost] = useState("127.0.0.1");
   const [localPort, setLocalPort] = useState<number | "">("");
@@ -90,11 +92,13 @@ export default function TunnelForm({
       setSshPort(tunnel.sshPort);
       setSshUser(tunnel.sshUser);
       setSshIdentityFile(tunnel.sshIdentityFile || "");
+      setSshPassword(tunnel.sshPassword || "");
       setJumpHostEnabled(tunnel.jumpHostEnabled);
       setJumpHost(tunnel.jumpHost || "");
       setJumpPort(tunnel.jumpPort || 22);
       setJumpUser(tunnel.jumpUser || "");
       setJumpIdentityFile(tunnel.jumpIdentityFile || "");
+      setJumpPassword(tunnel.jumpPassword || "");
       setLocalHost(tunnel.localHost || "127.0.0.1");
       setLocalPort(tunnel.localPort);
       setRemoteHost(tunnel.remoteHost || "");
@@ -170,7 +174,19 @@ export default function TunnelForm({
     setSshUser(cfg.user || "");
     setSshPort(cfg.port || 22);
     setSshIdentityFile(cfg.identityFile || "");
+    setSshPassword("");
     setShowSshConfigList(false);
+  };
+
+  const handleSelectPrivateKeyFile = async (setPath: (path: string) => void) => {
+    try {
+      const path = await selectPrivateKeyFile();
+      if (path) {
+        setPath(path);
+      }
+    } catch (error) {
+      console.error("Failed to select private key file:", error);
+    }
   };
 
   const getTabForErrorKey = (key: string): TabType => {
@@ -265,11 +281,13 @@ export default function TunnelForm({
       sshPort: Number(sshPort),
       sshUser,
       sshIdentityFile: sshIdentityFile || undefined,
+      sshPassword: sshPassword || undefined,
       jumpHostEnabled,
       jumpHost: jumpHostEnabled ? jumpHost : undefined,
       jumpPort: jumpHostEnabled ? Number(jumpPort) : undefined,
       jumpUser: jumpHostEnabled ? jumpUser : undefined,
       jumpIdentityFile: jumpHostEnabled && jumpIdentityFile ? jumpIdentityFile : undefined,
+      jumpPassword: jumpHostEnabled && jumpPassword ? jumpPassword : undefined,
       localHost: localHost || "127.0.0.1",
       localPort: Number(localPort),
       remoteHost: tunnelType === "local" ? remoteHost : undefined,
@@ -384,7 +402,9 @@ export default function TunnelForm({
                       <option key={g.id} value={g.id}>{g.name}</option>
                     ))}
                   </select>
-                  <ChevronDown className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <div className="absolute inset-y-0 right-2.5 flex items-center pointer-events-none">
+                    <ChevronDown className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500" />
+                  </div>
                 </div>
               </div>
             </div>
@@ -447,6 +467,20 @@ export default function TunnelForm({
               </div>
 
               <div>
+                <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">{t("sshPassword")}</label>
+                <CompositionInput
+                  type="password"
+                  placeholder="Optional password authentication"
+                  value={sshPassword}
+                  onValueChange={setSshPassword}
+                  className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500"
+                />
+                <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1">
+                  {t("sshPasswordDesc")}
+                </p>
+              </div>
+
+              <div>
                 <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">{t("privateKeyPath")}</label>
                 <div className="relative">
                   <CompositionInput
@@ -454,9 +488,16 @@ export default function TunnelForm({
                     placeholder="e.g., /Users/username/.ssh/id_rsa"
                     value={sshIdentityFile}
                     onValueChange={setSshIdentityFile}
-                    className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500"
+                    className="w-full pl-3 pr-10 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500"
                   />
-                  <Key className="w-3.5 h-3.5 absolute right-3 top-3 text-gray-400 dark:text-neutral-500" />
+                  <button
+                    type="button"
+                    onClick={() => handleSelectPrivateKeyFile(setSshIdentityFile)}
+                    title={t("selectPrivateKeyFile")}
+                    className="absolute inset-y-1 right-1 w-8 rounded-md flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-gray-100 dark:text-neutral-500 dark:hover:text-indigo-400 dark:hover:bg-neutral-800 transition cursor-pointer"
+                  >
+                    <FolderOpen className="w-3.5 h-3.5" />
+                  </button>
                 </div>
                 <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1">
                   {t("privateKeyDesc")}
@@ -480,7 +521,9 @@ export default function TunnelForm({
                     <option value="remote">{t("remoteForward")}</option>
                     <option value="socks5">{t("socks5Forward")}</option>
                   </select>
-                  <ChevronDown className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <div className="absolute inset-y-0 right-2.5 flex items-center pointer-events-none">
+                    <ChevronDown className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500" />
+                  </div>
                 </div>
               </div>
 
@@ -669,6 +712,7 @@ export default function TunnelForm({
                             setJumpPort(selected.sshPort);
                             setJumpUser(selected.sshUser);
                             setJumpIdentityFile(selected.sshIdentityFile || "");
+                            setJumpPassword(selected.sshPassword || "");
                           } else {
                             setJumpHost(e.target.value);
                           }
@@ -680,7 +724,9 @@ export default function TunnelForm({
                           <option key={t.id} value={t.name}>{t.name} ({t.sshHost})</option>
                         ))}
                       </select>
-                      <ChevronDown className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <div className="absolute inset-y-0 right-2.5 flex items-center pointer-events-none">
+                        <ChevronDown className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500" />
+                      </div>
                     </div>
                   </div>
 
@@ -720,14 +766,35 @@ export default function TunnelForm({
                       />
                     </div>
                     <div>
-                      <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">{t("privateKey")}</label>
+                      <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">{t("sshPassword")}</label>
+                      <CompositionInput
+                        type="password"
+                        placeholder="Optional password authentication"
+                        value={jumpPassword}
+                        onValueChange={setJumpPassword}
+                        className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">{t("privateKey")}</label>
+                    <div className="relative">
                       <CompositionInput
                         type="text"
                         placeholder="e.g., /path/to/bastion_key"
                         value={jumpIdentityFile}
                         onValueChange={setJumpIdentityFile}
-                        className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500"
+                        className="w-full px-3 pr-10 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500"
                       />
+                      <button
+                        type="button"
+                        onClick={() => handleSelectPrivateKeyFile(setJumpIdentityFile)}
+                        title={t("selectPrivateKeyFile")}
+                        className="absolute inset-y-1 right-1 w-8 rounded-md flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-gray-100 dark:text-neutral-500 dark:hover:text-indigo-400 dark:hover:bg-neutral-800 transition cursor-pointer"
+                      >
+                        <FolderOpen className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   </div>
                 </div>

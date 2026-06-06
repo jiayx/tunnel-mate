@@ -366,7 +366,9 @@ export default function SettingsModal({
                           <option value="en">English</option>
                           <option value="zh">简体中文</option>
                         </select>
-                        <ChevronDown className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        <div className="absolute inset-y-0 right-2 flex items-center pointer-events-none">
+                          <ChevronDown className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500" />
+                        </div>
                       </div>
                     </div>
 
@@ -389,7 +391,9 @@ export default function SettingsModal({
                           <option value="dark">{t("dark")}</option>
                           <option value="system">{t("system")}</option>
                         </select>
-                        <ChevronDown className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        <div className="absolute inset-y-0 right-2 flex items-center pointer-events-none">
+                          <ChevronDown className="w-3.5 h-3.5 text-gray-400 dark:text-neutral-500" />
+                        </div>
                       </div>
                     </div>
                   </div>

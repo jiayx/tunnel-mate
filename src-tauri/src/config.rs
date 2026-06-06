@@ -43,6 +43,7 @@ pub struct Tunnel {
     pub ssh_port: u16,
     pub ssh_user: String,
     pub ssh_identity_file: Option<String>,
+    pub ssh_password: Option<String>,
 
     // Jump Host
     pub jump_host_enabled: bool,
@@ -50,6 +51,7 @@ pub struct Tunnel {
     pub jump_port: Option<u16>,
     pub jump_user: Option<String>,
     pub jump_identity_file: Option<String>,
+    pub jump_password: Option<String>,
 
     // Forwarding
     pub local_host: Option<String>,  // e.g. "127.0.0.1"

@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { 
   Play, Square, Terminal, Calendar, 
   Activity, ShieldCheck, Link, Clock,
-  AlertTriangle
+  AlertTriangle, Info, PlayCircle, PlusCircle, Trash2
 } from "lucide-react";
 import { Tunnel, TunnelStatus, LogEvent } from "../lib/tauri";
 import LogsViewer from "./LogsViewer";
@@ -99,6 +99,27 @@ export default function TunnelOverview({
     }
   };
 
+  const getEventIcon = (type: LogEvent["eventType"]) => {
+    switch (type) {
+      case "created": return <PlusCircle className="w-3.5 h-3.5 text-emerald-500" />;
+      case "updated": return <Info className="w-3.5 h-3.5 text-indigo-500" />;
+      case "started": return <PlayCircle className="w-3.5 h-3.5 text-sky-500" />;
+      case "stopped": return <Clock className="w-3.5 h-3.5 text-neutral-500" />;
+      case "reconnected": return <ShieldCheck className="w-3.5 h-3.5 text-teal-500" />;
+      case "failed": return <AlertTriangle className="w-3.5 h-3.5 text-red-500" />;
+      case "deleted": return <Trash2 className="w-3.5 h-3.5 text-rose-500" />;
+      default: return <Info className="w-3.5 h-3.5 text-gray-500" />;
+    }
+  };
+
+  const formatEventTime = (dateStr: string) => {
+    try {
+      return new Date(dateStr).toLocaleString();
+    } catch {
+      return dateStr;
+    }
+  };
+
   // RENDER 1: EMPTY STATE / GLOBAL DASHBOARD OVERVIEW
   if (!tunnel) {
     const totalCount = tunnels.length;
@@ -108,6 +129,7 @@ export default function TunnelOverview({
     const failedTunnels = tunnels.filter(t => statuses[t.id] === "failed");
     const failedCount = failedTunnels.length;
     const isHealthy = failedCount === 0;
+    const recentEvents = [...events].reverse().slice(0, 5);
 
     return (
       <div className="flex-1 overflow-y-auto bg-gray-50 dark:bg-neutral-950 p-6 space-y-6 select-none">
@@ -170,32 +192,69 @@ export default function TunnelOverview({
         </div>
 
         {/* Getting Started Guide */}
-        <div className="p-5 bg-white dark:bg-neutral-900 border border-gray-200 dark:border-neutral-800 rounded-xl">
-          <h3 className="font-semibold text-sm text-gray-900 dark:text-white mb-4">{t("quickStart")}</h3>
-          <div className="grid grid-cols-3 gap-6 text-xs leading-normal">
-            <div className="space-y-1.5">
-              <span className="w-6 h-6 rounded-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold">1</span>
-              <h4 className="font-semibold text-gray-800 dark:text-neutral-200">{t("step1Title")}</h4>
-              <p className="text-gray-500 dark:text-neutral-400">{t("step1Desc")}</p>
-            </div>
-            <div className="space-y-1.5">
-              <span className="w-6 h-6 rounded-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold">2</span>
-              <h4 className="font-semibold text-gray-800 dark:text-neutral-200">{t("step2Title")}</h4>
-              <p className="text-gray-500 dark:text-neutral-400">{t("step2Desc")}</p>
-            </div>
-            <div className="space-y-1.5">
-              <span className="w-6 h-6 rounded-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold">3</span>
-              <h4 className="font-semibold text-gray-800 dark:text-neutral-200">{t("step3Title")}</h4>
-              <p className="text-gray-500 dark:text-neutral-400">{t("step3Desc")}</p>
+        {totalCount === 0 && (
+          <div className="p-5 bg-white dark:bg-neutral-900 border border-gray-200 dark:border-neutral-800 rounded-xl">
+            <h3 className="font-semibold text-sm text-gray-900 dark:text-white mb-4">{t("quickStart")}</h3>
+            <div className="grid grid-cols-3 gap-6 text-xs leading-normal">
+              <div className="space-y-1.5">
+                <span className="w-6 h-6 rounded-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold">1</span>
+                <h4 className="font-semibold text-gray-800 dark:text-neutral-200">{t("step1Title")}</h4>
+                <p className="text-gray-500 dark:text-neutral-400">{t("step1Desc")}</p>
+              </div>
+              <div className="space-y-1.5">
+                <span className="w-6 h-6 rounded-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold">2</span>
+                <h4 className="font-semibold text-gray-800 dark:text-neutral-200">{t("step2Title")}</h4>
+                <p className="text-gray-500 dark:text-neutral-400">{t("step2Desc")}</p>
+              </div>
+              <div className="space-y-1.5">
+                <span className="w-6 h-6 rounded-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold">3</span>
+                <h4 className="font-semibold text-gray-800 dark:text-neutral-200">{t("step3Title")}</h4>
+                <p className="text-gray-500 dark:text-neutral-400">{t("step3Desc")}</p>
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
-        {/* Global Event Timeline */}
+        {/* Recent Activity */}
         <div className="space-y-2">
           <span className="text-[10px] font-semibold text-gray-400 dark:text-neutral-500 uppercase tracking-wider block">{t("recentGlobalEvents")}</span>
-          <div className="max-h-60 overflow-y-auto">
-            <EventsViewer events={events.slice(-5)} onRefresh={onRefreshEvents} />
+          <div className="bg-white dark:bg-neutral-900 border border-gray-200 dark:border-neutral-800 rounded-xl overflow-hidden">
+            {recentEvents.length > 0 ? (
+              <div className="divide-y divide-gray-100 dark:divide-neutral-850">
+                {recentEvents.map(event => (
+                  <div key={event.id} className="flex items-start gap-3 px-4 py-3">
+                    <span className="mt-0.5 p-1.5 rounded-full bg-gray-50 dark:bg-neutral-850 border border-gray-100 dark:border-neutral-800 shrink-0">
+                      {getEventIcon(event.eventType)}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-3 mb-0.5">
+                        <div className="min-w-0 flex items-center gap-2">
+                          <span className="text-[10px] uppercase font-bold tracking-wider text-gray-400 dark:text-neutral-500 shrink-0">
+                            {t(`ev_${event.eventType}` as any)}
+                          </span>
+                          {event.tunnelName && (
+                            <span className="text-xs font-semibold text-gray-800 dark:text-neutral-200 truncate">
+                              {event.tunnelName}
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-gray-400 dark:text-neutral-500 shrink-0">
+                          {formatEventTime(event.timestamp)}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500 dark:text-neutral-400 truncate">
+                        {event.message}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="px-4 py-6 text-xs text-gray-400 dark:text-neutral-500 flex items-center justify-center gap-2">
+                <Calendar className="w-4 h-4" />
+                <span>{t("noRecentActivity")}</span>
+              </div>
+            )}
           </div>
         </div>
       </div>

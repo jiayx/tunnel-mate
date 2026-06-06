@@ -7,6 +7,7 @@ import {
 import { Group, Tunnel, TunnelStatus } from "../lib/tauri";
 import { useLanguage } from "../lib/i18n";
 import { CompositionInput } from "./CompositionInput";
+import appIcon from "../../src-tauri/icons/icon_source.png";
 
 interface SidebarProps {
   groups: Group[];
@@ -295,9 +296,12 @@ export default function Sidebar({
       {/* App Header */}
       <div className="p-4 flex items-center justify-between border-b border-gray-200 dark:border-neutral-800">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold text-lg shadow-md shadow-indigo-500/20">
-            T
-          </div>
+          <img
+            src={appIcon}
+            alt="Tunnel Mate"
+            className="w-8 h-8 object-contain"
+            draggable={false}
+          />
           <div>
             <h1 className="font-semibold text-sm tracking-wide text-gray-900 dark:text-white">Tunnel Mate</h1>
             <p className="text-[10px] text-gray-500 dark:text-neutral-400">Secure SSH Manager</p>
@@ -308,7 +312,9 @@ export default function Sidebar({
       {/* Search Bar */}
       <div className="px-3 pt-3 flex flex-col gap-2">
         <div className="relative">
-          <Search className="w-4 h-4 absolute left-2.5 top-2.5 text-gray-400 dark:text-neutral-500" />
+          <div className="absolute inset-y-0 left-2.5 flex items-center pointer-events-none">
+            <Search className="w-4 h-4 text-gray-400 dark:text-neutral-500" />
+          </div>
           <CompositionInput
             type="text"
             placeholder={t("searchPlaceholder")}

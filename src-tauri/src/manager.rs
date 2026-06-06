@@ -39,7 +39,10 @@ impl TunnelManager {
     }
 
     pub fn get_status(&self, tunnel_id: &str) -> TunnelStatus {
-        self.statuses.get(tunnel_id).cloned().unwrap_or(TunnelStatus::Stopped)
+        self.statuses
+            .get(tunnel_id)
+            .cloned()
+            .unwrap_or(TunnelStatus::Stopped)
     }
 
     pub async fn start_tunnel(
@@ -62,7 +65,9 @@ impl TunnelManager {
             if let Some(task) = manager.reconnect_tasks.remove(&tunnel_id) {
                 task.abort();
             }
-            manager.statuses.insert(tunnel_id.clone(), TunnelStatus::Connecting);
+            manager
+                .statuses
+                .insert(tunnel_id.clone(), TunnelStatus::Connecting);
         }
 
         // Notify connecting status
@@ -82,11 +87,44 @@ impl TunnelManager {
         // Resolve Jump Host configuration if enabled
         let jump_config = if tunnel.jump_host_enabled {
             let config = ConfigStore::new().load_config()?;
-            config
+            let selected = config
                 .tunnels
                 .iter()
                 .find(|t| t.name == tunnel.jump_host.clone().unwrap_or_default())
-                .cloned()
+                .cloned();
+
+            selected.or_else(|| {
+                let host = tunnel.jump_host.clone()?;
+                Some(Tunnel {
+                    id: format!("{}_manual_jump", tunnel.id),
+                    name: host.clone(),
+                    description: None,
+                    group_id: None,
+                    tunnel_type: tunnel.tunnel_type.clone(),
+                    ssh_host: host,
+                    ssh_port: tunnel.jump_port.unwrap_or(22),
+                    ssh_user: tunnel
+                        .jump_user
+                        .clone()
+                        .unwrap_or_else(|| tunnel.ssh_user.clone()),
+                    ssh_identity_file: tunnel.jump_identity_file.clone(),
+                    ssh_password: tunnel.jump_password.clone(),
+                    jump_host_enabled: false,
+                    jump_host: None,
+                    jump_port: None,
+                    jump_user: None,
+                    jump_identity_file: None,
+                    jump_password: None,
+                    local_host: tunnel.local_host.clone(),
+                    local_port: tunnel.local_port,
+                    remote_host: tunnel.remote_host.clone(),
+                    remote_port: tunnel.remote_port,
+                    start_with_app: false,
+                    auto_reconnect: false,
+                    retry_count: 0,
+                    retry_interval: tunnel.retry_interval,
+                })
+            })
         } else {
             None
         };
@@ -106,6 +144,7 @@ impl TunnelManager {
                 t_clone.ssh_port,
                 &t_clone.ssh_user,
                 t_clone.ssh_identity_file.as_deref(),
+                t_clone.ssh_password.as_deref(),
                 passphrase_conn.as_deref(),
                 "trustPermanently", // Default verify policy: auto-add on first connect
                 jump_config.as_ref(),
@@ -126,7 +165,9 @@ impl TunnelManager {
                     if err_msg == "PASSPHRASE_REQUIRED" {
                         {
                             let mut manager = m_state.lock().await;
-                            manager.statuses.insert(tunnel_id.clone(), TunnelStatus::Failed);
+                            manager
+                                .statuses
+                                .insert(tunnel_id.clone(), TunnelStatus::Failed);
                         }
                         emit_status(
                             &app_handle,
@@ -142,7 +183,9 @@ impl TunnelManager {
                     } else {
                         {
                             let mut manager = m_state.lock().await;
-                            manager.statuses.insert(tunnel_id.clone(), TunnelStatus::Failed);
+                            manager
+                                .statuses
+                                .insert(tunnel_id.clone(), TunnelStatus::Failed);
                         }
                         emit_status(&app_handle, &tunnel_id, TunnelStatus::Failed, Some(err_msg));
                     }
@@ -173,7 +216,9 @@ impl TunnelManager {
                         );
                         {
                             let mut manager = m_state.lock().await;
-                            manager.statuses.insert(tunnel_id.clone(), TunnelStatus::Failed);
+                            manager
+                                .statuses
+                                .insert(tunnel_id.clone(), TunnelStatus::Failed);
                         }
                         emit_status(&app_handle, &tunnel_id, TunnelStatus::Failed, Some(err_msg));
                         ssh_session.disconnect().await;
@@ -191,7 +236,9 @@ impl TunnelManager {
 
             {
                 let mut manager = m_state.lock().await;
-                manager.statuses.insert(tunnel_id.clone(), TunnelStatus::Running);
+                manager
+                    .statuses
+                    .insert(tunnel_id.clone(), TunnelStatus::Running);
                 manager.active_tunnels.insert(tunnel_id.clone(), active);
             }
 
@@ -233,8 +280,9 @@ impl TunnelManager {
                 "Tunnel stopped by user".to_string(),
             );
         }
-        
-        self.statuses.insert(tunnel_id.to_string(), TunnelStatus::Stopped);
+
+        self.statuses
+            .insert(tunnel_id.to_string(), TunnelStatus::Stopped);
 
         // Always emit stopped status so the frontend updates
         emit_status(app, tunnel_id, TunnelStatus::Stopped, None);
@@ -281,7 +329,9 @@ impl TunnelManager {
         let t_id_reconn = tunnel_id.clone();
         tokio::spawn(async move {
             let mut manager = m_state_reconn.lock().await;
-            manager.statuses.insert(t_id_reconn, TunnelStatus::Reconnecting);
+            manager
+                .statuses
+                .insert(t_id_reconn, TunnelStatus::Reconnecting);
         });
 
         emit_status(
@@ -402,7 +452,9 @@ impl TunnelManager {
                     } else {
                         {
                             let mut manager = m_state.lock().await;
-                            manager.statuses.insert(tunnel_id.clone(), TunnelStatus::Failed);
+                            manager
+                                .statuses
+                                .insert(tunnel_id.clone(), TunnelStatus::Failed);
                         }
                         emit_status(
                             &app,

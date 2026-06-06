@@ -61,7 +61,9 @@ export default function EventsViewer({
       {/* Control Header */}
       <div className="px-4 py-3 bg-gray-50 dark:bg-neutral-900/50 border-b border-gray-200 dark:border-neutral-800 flex items-center justify-between gap-3">
         <div className="relative">
-          <Search className="w-4 h-4 absolute left-2.5 top-2.5 text-gray-400 dark:text-neutral-500" />
+          <div className="absolute inset-y-0 left-2.5 flex items-center pointer-events-none">
+            <Search className="w-4 h-4 text-gray-400 dark:text-neutral-500" />
+          </div>
           <CompositionInput
             type="text"
             placeholder={t("searchEventsLog")}

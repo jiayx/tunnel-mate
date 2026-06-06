@@ -90,6 +90,7 @@ pub async fn run_diagnostics(tunnel: &Tunnel, passphrase: Option<&str>) -> Vec<D
         target.port,
         &target.user,
         target.identity_file.as_deref(),
+        target.password.as_deref(),
         passphrase,
         "trustOnce",
         None,
@@ -122,6 +123,7 @@ struct DiagnosticTarget {
     port: u16,
     user: String,
     identity_file: Option<String>,
+    password: Option<String>,
     prefix: &'static str,
 }
 
@@ -141,6 +143,10 @@ fn resolve_diagnostic_target(tunnel: &Tunnel) -> DiagnosticTarget {
                 .jump_identity_file
                 .clone()
                 .or_else(|| tunnel.ssh_identity_file.clone()),
+            password: tunnel
+                .jump_password
+                .clone()
+                .or_else(|| tunnel.ssh_password.clone()),
             prefix: "[Jump Host] ",
         }
     } else {
@@ -149,6 +155,7 @@ fn resolve_diagnostic_target(tunnel: &Tunnel) -> DiagnosticTarget {
             port: tunnel.ssh_port,
             user: tunnel.ssh_user.clone(),
             identity_file: tunnel.ssh_identity_file.clone(),
+            password: tunnel.ssh_password.clone(),
             prefix: "",
         }
     }
@@ -194,11 +201,13 @@ mod tests {
             ssh_port: 22,
             ssh_user: "root".to_string(),
             ssh_identity_file: Some("/tmp/key".to_string()),
+            ssh_password: None,
             jump_host_enabled: false,
             jump_host: None,
             jump_port: None,
             jump_user: None,
             jump_identity_file: None,
+            jump_password: None,
             local_host: Some("127.0.0.1".to_string()),
             local_port: 18080,
             remote_host: Some("127.0.0.1".to_string()),

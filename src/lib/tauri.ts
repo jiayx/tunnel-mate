@@ -26,6 +26,7 @@ export interface Tunnel {
   sshPort: number;
   sshUser: string;
   sshIdentityFile?: string;
+  sshPassword?: string;
 
   // Jump Host
   jumpHostEnabled: boolean;
@@ -33,6 +34,7 @@ export interface Tunnel {
   jumpPort?: number;
   jumpUser?: string;
   jumpIdentityFile?: string;
+  jumpPassword?: string;
 
   // Forwarding
   localHost?: string;
@@ -118,6 +120,10 @@ export async function getEvents(): Promise<LogEvent[]> {
 
 export async function importSshConfig(): Promise<SshHostConfig[]> {
   return invoke<SshHostConfig[]>("import_ssh_config");
+}
+
+export async function selectPrivateKeyFile(): Promise<string | null> {
+  return invoke<string | null>("select_private_key_file");
 }
 
 export async function testConnection(tunnel: Tunnel, passphrase?: string): Promise<DiagnosticStep[]> {

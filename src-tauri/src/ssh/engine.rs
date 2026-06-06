@@ -75,6 +75,7 @@ impl SshSession {
         port: u16,
         user: &str,
         identity_file: Option<&str>,
+        password: Option<&str>,
         passphrase: Option<&str>,
         _known_hosts_policy: &str,
         jump_host_config: Option<&Tunnel>,
@@ -120,6 +121,7 @@ impl SshSession {
                     jump.ssh_port,
                     &jump.ssh_user,
                     jump.ssh_identity_file.as_deref(),
+                    jump.ssh_password.as_deref(),
                     passphrase,
                     _known_hosts_policy,
                     None,
@@ -149,7 +151,7 @@ impl SshSession {
             (handle, None)
         };
 
-        authenticate_handle(&mut handle, user, identity_file, passphrase).await?;
+        authenticate_handle(&mut handle, user, identity_file, password, passphrase).await?;
 
         Ok(Self {
             handle: Arc::new(Mutex::new(handle)),
@@ -187,10 +189,16 @@ async fn authenticate_handle(
     handle: &mut SshHandle,
     user: &str,
     identity_file: Option<&str>,
+    password: Option<&str>,
     passphrase: Option<&str>,
 ) -> Result<(), String> {
     if let Some(path) = identity_file {
         authenticate_key_file(handle, user, PathBuf::from(path), passphrase).await?;
+        return Ok(());
+    }
+
+    if let Some(password) = password.filter(|value| !value.is_empty()) {
+        authenticate_password(handle, user, password).await?;
         return Ok(());
     }
 
@@ -208,7 +216,24 @@ async fn authenticate_handle(
         }
     }
 
-    Err("All authentication methods failed. Please provide a valid SSH Agent or Private Key configuration.".to_string())
+    Err("All authentication methods failed. Please provide a valid SSH password, SSH Agent, or Private Key configuration.".to_string())
+}
+
+async fn authenticate_password(
+    handle: &mut SshHandle,
+    user: &str,
+    password: &str,
+) -> Result<(), String> {
+    let auth = handle
+        .authenticate_password(user, password)
+        .await
+        .map_err(|e| format!("Password authentication failed: {}", e))?;
+
+    if auth.success() {
+        Ok(())
+    } else {
+        Err("Password authentication failed".to_string())
+    }
 }
 
 async fn authenticate_key_file(

@@ -92,7 +92,9 @@ export default function LogsViewer({
 
           {/* Search */}
           <div className="relative">
-            <Search className="w-3.5 h-3.5 absolute left-2 top-2 text-gray-500" />
+            <div className="absolute inset-y-0 left-2 flex items-center pointer-events-none">
+              <Search className="w-3.5 h-3.5 text-gray-500" />
+            </div>
             <CompositionInput
               type="text"
               placeholder={t("logsSearchPlaceholder")}
