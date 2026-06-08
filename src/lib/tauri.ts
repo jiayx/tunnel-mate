@@ -4,9 +4,19 @@ import { listen, Event } from "@tauri-apps/api/event";
 // TypeScript Interfaces matching Rust Models
 // Type Definitions
 
-export type TunnelType = "local" | "remote" | "socks5";
+export type ForwardKind = "local" | "remote" | "socks5";
 
 export type TunnelStatus = "stopped" | "running" | "connecting" | "reconnecting" | "failed";
+
+export interface Endpoint {
+  host: string;
+  port: number;
+}
+
+export type ForwardSpec =
+  | { kind: "local"; listen: Endpoint; target: Endpoint }
+  | { kind: "remote"; listen: Endpoint; target: Endpoint }
+  | { kind: "socks5"; listen: Endpoint };
 
 export interface Group {
   id: string;
@@ -19,8 +29,7 @@ export interface Tunnel {
   name: string;
   description?: string;
   groupId?: string;
-  tunnelType: TunnelType;
-  
+
   // SSH connection settings
   sshHost: string;
   sshPort: number;
@@ -37,10 +46,7 @@ export interface Tunnel {
   jumpPassword?: string;
 
   // Forwarding
-  localHost?: string;
-  localPort: number;
-  remoteHost?: string;
-  remotePort?: number;
+  forward: ForwardSpec;
 
   // Behaviors
   startWithApp: boolean;
@@ -63,6 +69,18 @@ export interface AppConfig {
   groups: Group[];
   tunnels: Tunnel[];
   settings?: GlobalSettings;
+}
+
+export function getListenEndpoint(tunnel: Tunnel): Endpoint {
+  return tunnel.forward.listen;
+}
+
+export function getTargetEndpoint(tunnel: Tunnel): Endpoint | undefined {
+  return tunnel.forward.kind === "socks5" ? undefined : tunnel.forward.target;
+}
+
+export function formatEndpoint(endpoint: Endpoint): string {
+  return `${endpoint.host}:${endpoint.port}`;
 }
 
 // SSH Config Interfaces

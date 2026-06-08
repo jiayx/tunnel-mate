@@ -1,4 +1,4 @@
-use crate::config::Tunnel;
+use crate::config::{Endpoint, ForwardSpec, Tunnel};
 use crate::ssh::engine::SshSession;
 use serde::{Deserialize, Serialize};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
@@ -15,31 +15,83 @@ pub struct DiagnosticStep {
 pub async fn run_diagnostics(tunnel: &Tunnel, passphrase: Option<&str>) -> Vec<DiagnosticStep> {
     let mut steps = Vec::new();
 
-    let local_host = tunnel
-        .local_host
-        .clone()
-        .unwrap_or_else(|| "127.0.0.1".to_string());
-    let local_port = tunnel.local_port;
-
-    match TcpListener::bind(format!("{}:{}", local_host, local_port)) {
-        Ok(_) => steps.push(success(
-            "Local Environment",
+    if let Some(bind_target) = resolve_local_bind_check(tunnel) {
+        match TcpListener::bind(format!("{}:{}", bind_target.host, bind_target.port)) {
+            Ok(_) => steps.push(success(
+                "Listener Availability",
+                format!(
+                    "Listener {}:{} is free and available to bind",
+                    bind_target.host, bind_target.port
+                ),
+            )),
+            Err(e) => {
+                steps.push(error(
+                    "Listener Availability",
+                    format!("Listener {}:{} cannot be bound: {}. It is likely in use by another application.", bind_target.host, bind_target.port, e),
+                ));
+                return steps;
+            }
+        }
+    } else {
+        let remote_bind = resolve_remote_listener(tunnel);
+        steps.push(success(
+            "Remote Listener",
             format!(
-                "Port {} is free and available to bind on {}",
-                local_port, local_host
+                "Remote listener {}:{} will be requested on the SSH server when the tunnel starts",
+                remote_bind.host, remote_bind.port
             ),
-        )),
-        Err(e) => {
-            steps.push(error(
-                "Local Environment",
-                format!("Port {} cannot be bound on {}: {}. It is likely in use by another application.", local_port, local_host, e),
-            ));
-            return steps;
+        ));
+    }
+
+    if let Some(forward_target) = resolve_forward_tcp_check(tunnel) {
+        let addr =
+            match format!("{}:{}", forward_target.host, forward_target.port).to_socket_addrs() {
+                Ok(mut addrs) => {
+                    if let Some(addr) = addrs.next() {
+                        steps.push(success(
+                            format!("{}DNS Resolution", forward_target.prefix),
+                            format!("Resolved {} to {}", forward_target.host, addr.ip()),
+                        ));
+                        addr
+                    } else {
+                        steps.push(error(
+                            format!("{}DNS Resolution", forward_target.prefix),
+                            format!("Resolved {} to no IP addresses", forward_target.host),
+                        ));
+                        return steps;
+                    }
+                }
+                Err(e) => {
+                    steps.push(error(
+                        format!("{}DNS Resolution", forward_target.prefix),
+                        format!("Failed to resolve hostname {}: {}", forward_target.host, e),
+                    ));
+                    return steps;
+                }
+            };
+
+        match TcpStream::connect_timeout(&addr, Duration::from_secs(5)) {
+            Ok(_) => steps.push(success(
+                format!("{}TCP Connection", forward_target.prefix),
+                format!(
+                    "Successfully established TCP socket to {}:{}",
+                    forward_target.host, forward_target.port
+                ),
+            )),
+            Err(e) => {
+                steps.push(error(
+                    format!("{}TCP Connection", forward_target.prefix),
+                    format!(
+                        "Failed to connect to {}:{}: {}",
+                        forward_target.host, forward_target.port, e
+                    ),
+                ));
+                return steps;
+            }
         }
     }
 
     let target = resolve_diagnostic_target(tunnel);
-
     let addr = match format!("{}:{}", target.host, target.port).to_socket_addrs() {
         Ok(mut addrs) => {
             if let Some(addr) = addrs.next() {
@@ -127,6 +179,41 @@ struct DiagnosticTarget {
     prefix: &'static str,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct DiagnosticEndpoint {
+    host: String,
+    port: u16,
+    prefix: &'static str,
+}
+
+fn resolve_local_bind_check(tunnel: &Tunnel) -> Option<DiagnosticEndpoint> {
+    match &tunnel.forward {
+        ForwardSpec::Local { listen, .. } | ForwardSpec::Socks5 { listen } => {
+            Some(endpoint_to_diagnostic(listen, ""))
+        }
+        ForwardSpec::Remote { .. } => None,
+    }
+}
+
+fn resolve_remote_listener(tunnel: &Tunnel) -> DiagnosticEndpoint {
+    endpoint_to_diagnostic(tunnel.forward.listen(), "")
+}
+
+fn resolve_forward_tcp_check(tunnel: &Tunnel) -> Option<DiagnosticEndpoint> {
+    match &tunnel.forward {
+        ForwardSpec::Remote { target, .. } => Some(endpoint_to_diagnostic(target, "[Target] ")),
+        ForwardSpec::Local { .. } | ForwardSpec::Socks5 { .. } => None,
+    }
+}
+
+fn endpoint_to_diagnostic(endpoint: &Endpoint, prefix: &'static str) -> DiagnosticEndpoint {
+    DiagnosticEndpoint {
+        host: endpoint.host.clone(),
+        port: endpoint.port,
+        prefix,
+    }
+}
+
 fn resolve_diagnostic_target(tunnel: &Tunnel) -> DiagnosticTarget {
     if tunnel.jump_host_enabled {
         DiagnosticTarget {
@@ -188,15 +275,20 @@ fn error(name: impl Into<String>, message: impl Into<String>) -> DiagnosticStep 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::TunnelType;
 
-    fn base_tunnel() -> Tunnel {
+    fn endpoint(host: &str, port: u16) -> Endpoint {
+        Endpoint {
+            host: host.to_string(),
+            port,
+        }
+    }
+
+    fn base_tunnel(forward: ForwardSpec) -> Tunnel {
         Tunnel {
             id: "t1".to_string(),
             name: "test".to_string(),
             description: None,
             group_id: None,
-            tunnel_type: TunnelType::Local,
             ssh_host: "example.test".to_string(),
             ssh_port: 22,
             ssh_user: "root".to_string(),
@@ -208,10 +300,7 @@ mod tests {
             jump_user: None,
             jump_identity_file: None,
             jump_password: None,
-            local_host: Some("127.0.0.1".to_string()),
-            local_port: 18080,
-            remote_host: Some("127.0.0.1".to_string()),
-            remote_port: Some(80),
+            forward,
             start_with_app: false,
             auto_reconnect: false,
             retry_count: 3,
@@ -220,8 +309,65 @@ mod tests {
     }
 
     #[test]
+    fn remote_diagnostics_skip_local_bind_and_check_target() {
+        let tunnel = base_tunnel(ForwardSpec::Remote {
+            listen: endpoint("0.0.0.0", 18080),
+            target: endpoint("127.0.0.1", 3000),
+        });
+
+        assert_eq!(resolve_local_bind_check(&tunnel), None);
+        assert_eq!(
+            resolve_remote_listener(&tunnel),
+            DiagnosticEndpoint {
+                host: "0.0.0.0".to_string(),
+                port: 18080,
+                prefix: "",
+            }
+        );
+        assert_eq!(
+            resolve_forward_tcp_check(&tunnel),
+            Some(DiagnosticEndpoint {
+                host: "127.0.0.1".to_string(),
+                port: 3000,
+                prefix: "[Target] ",
+            })
+        );
+    }
+
+    #[test]
+    fn local_diagnostics_keep_local_bind_and_skip_target_precheck() {
+        let tunnel = base_tunnel(ForwardSpec::Local {
+            listen: endpoint("127.0.0.1", 18080),
+            target: endpoint("127.0.0.1", 80),
+        });
+
+        assert_eq!(
+            resolve_local_bind_check(&tunnel),
+            Some(DiagnosticEndpoint {
+                host: "127.0.0.1".to_string(),
+                port: 18080,
+                prefix: "",
+            })
+        );
+        assert_eq!(resolve_forward_tcp_check(&tunnel), None);
+    }
+
+    #[test]
+    fn socks5_diagnostics_have_local_bind_but_no_target() {
+        let tunnel = base_tunnel(ForwardSpec::Socks5 {
+            listen: endpoint("127.0.0.1", 1080),
+        });
+
+        assert!(resolve_local_bind_check(&tunnel).is_some());
+        assert_eq!(resolve_forward_tcp_check(&tunnel), None);
+    }
+
+    #[test]
     fn resolve_direct_diagnostic_target() {
-        let tunnel = base_tunnel();
+        let tunnel = base_tunnel(ForwardSpec::Local {
+            listen: endpoint("127.0.0.1", 18080),
+            target: endpoint("127.0.0.1", 80),
+        });
         let target = resolve_diagnostic_target(&tunnel);
 
         assert_eq!(target.host, "example.test");

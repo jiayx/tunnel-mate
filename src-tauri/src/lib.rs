@@ -5,7 +5,7 @@ mod manager;
 mod ssh;
 mod ssh_config;
 
-use crate::config::{AppConfig, ConfigStore, Tunnel, TunnelStatus};
+use crate::config::{validate_config, AppConfig, ConfigStore, Tunnel, TunnelStatus};
 use crate::diagnostics::{run_diagnostics, DiagnosticStep};
 use crate::event_logger::{EventLogger, EventType, LogEvent};
 use crate::manager::TunnelManager;
@@ -27,6 +27,7 @@ fn get_config() -> Result<AppConfig, String> {
 
 #[tauri::command]
 fn save_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
+    validate_config(&config)?;
     let store = ConfigStore::new();
     store.save_config(&config)?;
     update_tray_menu(&app);
@@ -133,10 +134,7 @@ fn import_config(app: AppHandle, config_str: String) -> Result<(), String> {
     let new_config: AppConfig = serde_json::from_str(&config_str)
         .map_err(|e| format!("Invalid configuration format: {}", e))?;
 
-    // Simple validation
-    if new_config.version == 0 {
-        return Err("Invalid configuration version".to_string());
-    }
+    validate_config(&new_config)?;
 
     store.save_config(&new_config)?;
 
@@ -202,9 +200,10 @@ pub fn update_tray_menu(app: &AppHandle) {
                     TunnelStatus::Failed => "🔴",
                     TunnelStatus::Stopped => "⚪",
                 };
+                let listen = tunnel.forward.listen();
                 let label = format!(
-                    "{} {} (Port {})",
-                    status_icon, tunnel.name, tunnel.local_port
+                    "{} {} (Listen {}:{})",
+                    status_icon, tunnel.name, listen.host, listen.port
                 );
                 let item_id = format!("toggle_{}", tunnel.id);
                 if let Ok(item) = MenuItem::with_id(&app_handle, item_id, label, true, None::<&str>)

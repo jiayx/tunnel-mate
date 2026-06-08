@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { X, Download, ChevronDown, Info, Server, Shuffle, GitBranch, RotateCcw, FolderOpen } from "lucide-react";
-import { Group, Tunnel, TunnelType, SshHostConfig, importSshConfig, selectPrivateKeyFile } from "../lib/tauri";
+import { Group, Tunnel, ForwardKind, SshHostConfig, importSshConfig, selectPrivateKeyFile } from "../lib/tauri";
 import { useLanguage } from "../lib/i18n";
 import { CompositionInput, CompositionTextarea } from "./CompositionInput";
 
@@ -32,7 +32,7 @@ export default function TunnelForm({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [groupId, setGroupId] = useState(defaultGroupId || "");
-  const [tunnelType, setTunnelType] = useState<TunnelType>("local");
+  const [forwardKind, setForwardKind] = useState<ForwardKind>("local");
 
   const [sshHost, setSshHost] = useState("");
   const [sshPort, setSshPort] = useState<number | "">(22);
@@ -47,10 +47,10 @@ export default function TunnelForm({
   const [jumpIdentityFile, setJumpIdentityFile] = useState("");
   const [jumpPassword, setJumpPassword] = useState("");
 
-  const [localHost, setLocalHost] = useState("127.0.0.1");
-  const [localPort, setLocalPort] = useState<number | "">("");
-  const [remoteHost, setRemoteHost] = useState("");
-  const [remotePort, setRemotePort] = useState<number | "">("");
+  const [listenHost, setListenHost] = useState("127.0.0.1");
+  const [listenPort, setListenPort] = useState<number | "">("");
+  const [targetHost, setTargetHost] = useState("");
+  const [targetPort, setTargetPort] = useState<number | "">("");
 
   const [startWithApp, setStartWithApp] = useState(false);
   const [autoReconnect, setAutoReconnect] = useState(true);
@@ -87,7 +87,7 @@ export default function TunnelForm({
       setName(tunnel.name);
       setDescription(tunnel.description || "");
       setGroupId(tunnel.groupId || "");
-      setTunnelType(tunnel.tunnelType);
+      setForwardKind(tunnel.forward.kind);
       setSshHost(tunnel.sshHost);
       setSshPort(tunnel.sshPort);
       setSshUser(tunnel.sshUser);
@@ -99,17 +99,22 @@ export default function TunnelForm({
       setJumpUser(tunnel.jumpUser || "");
       setJumpIdentityFile(tunnel.jumpIdentityFile || "");
       setJumpPassword(tunnel.jumpPassword || "");
-      setLocalHost(tunnel.localHost || "127.0.0.1");
-      setLocalPort(tunnel.localPort);
-      setRemoteHost(tunnel.remoteHost || "");
-      setRemotePort(tunnel.remotePort || "");
+      setListenHost(tunnel.forward.listen.host);
+      setListenPort(tunnel.forward.listen.port);
+      if (tunnel.forward.kind === "socks5") {
+        setTargetHost("");
+        setTargetPort("");
+      } else {
+        setTargetHost(tunnel.forward.target.host);
+        setTargetPort(tunnel.forward.target.port);
+      }
       setStartWithApp(tunnel.startWithApp);
       setAutoReconnect(tunnel.autoReconnect);
       setRetryCount(tunnel.retryCount);
       setRetryInterval(tunnel.retryInterval);
     } else {
       // Default local port generator
-      setLocalPort(Math.floor(Math.random() * 10000) + 10000);
+      setListenPort(Math.floor(Math.random() * 10000) + 10000);
     }
   }, [tunnel]);
 
@@ -135,16 +140,16 @@ export default function TunnelForm({
         delete next.sshPort;
         changed = true;
       }
-      if (next.localPort && typeof localPort === "number" && localPort >= 1 && localPort <= 65535 && Number.isInteger(localPort)) {
-        delete next.localPort;
+      if (next.listenPort && typeof listenPort === "number" && listenPort >= 1 && listenPort <= 65535 && Number.isInteger(listenPort)) {
+        delete next.listenPort;
         changed = true;
       }
-      if (next.remoteHost && remoteHost.trim()) {
-        delete next.remoteHost;
+      if (next.targetHost && targetHost.trim()) {
+        delete next.targetHost;
         changed = true;
       }
-      if (next.remotePort && typeof remotePort === "number" && remotePort >= 1 && remotePort <= 65535 && Number.isInteger(remotePort)) {
-        delete next.remotePort;
+      if (next.targetPort && typeof targetPort === "number" && targetPort >= 1 && targetPort <= 65535 && Number.isInteger(targetPort)) {
+        delete next.targetPort;
         changed = true;
       }
       if (next.jumpHost && (!jumpHostEnabled || jumpHost)) {
@@ -166,7 +171,7 @@ export default function TunnelForm({
 
       return changed ? next : prev;
     });
-  }, [name, sshHost, sshUser, sshPort, localPort, remoteHost, remotePort, jumpHost, jumpPort, jumpHostEnabled, autoReconnect, retryCount, retryInterval]);
+  }, [name, sshHost, sshUser, sshPort, listenPort, targetHost, targetPort, jumpHost, jumpPort, jumpHostEnabled, autoReconnect, retryCount, retryInterval]);
 
   const handleAutoFill = (cfg: SshHostConfig) => {
     if (!name) setName(cfg.host);
@@ -192,7 +197,7 @@ export default function TunnelForm({
   const getTabForErrorKey = (key: string): TabType => {
     if (key === "name") return "general";
     if (key === "sshHost" || key === "sshUser" || key === "sshPort") return "ssh";
-    if (key === "localPort" || key === "remoteHost" || key === "remotePort") return "forward";
+    if (key === "listenPort" || key === "targetHost" || key === "targetPort") return "forward";
     if (key === "jumpHost" || key === "jumpPort") return "jump";
     if (key === "retryCount" || key === "retryInterval") return "behavior";
     return "general";
@@ -213,22 +218,22 @@ export default function TunnelForm({
     }
 
     // 3. Port Forwarding Tab
-    const lPort = Number(localPort);
-    if (!localPort) {
-      errs.localPort = t("errLocalPortRequired");
+    const lPort = Number(listenPort);
+    if (!listenPort) {
+      errs.listenPort = t("errListenPortRequired");
     } else if (isNaN(lPort) || lPort < 1 || lPort > 65535 || !Number.isInteger(lPort)) {
-      errs.localPort = t("errInvalidPort");
+      errs.listenPort = t("errInvalidPort");
     }
 
-    if (tunnelType === "local" || tunnelType === "remote") {
-      if (tunnelType === "local" && !remoteHost.trim()) {
-        errs.remoteHost = t("errDestHostRequired");
+    if (forwardKind === "local" || forwardKind === "remote") {
+      if (!targetHost.trim()) {
+        errs.targetHost = t("errTargetHostRequired");
       }
-      const rPort = Number(remotePort);
-      if (!remotePort) {
-        errs.remotePort = t("errDestPortRequired");
+      const rPort = Number(targetPort);
+      if (!targetPort) {
+        errs.targetPort = t("errTargetPortRequired");
       } else if (isNaN(rPort) || rPort < 1 || rPort > 65535 || !Number.isInteger(rPort)) {
-        errs.remotePort = t("errInvalidPort");
+        errs.targetPort = t("errInvalidPort");
       }
     }
 
@@ -271,27 +276,36 @@ export default function TunnelForm({
   const handleSave = () => {
     if (!validate()) return;
 
+    const normalizedListenHost = listenHost.trim() || "127.0.0.1";
+    const normalizedTargetHost = targetHost.trim();
+    const forward = forwardKind === "socks5"
+      ? {
+          kind: "socks5" as const,
+          listen: { host: normalizedListenHost, port: Number(listenPort) },
+        }
+      : {
+          kind: forwardKind,
+          listen: { host: normalizedListenHost, port: Number(listenPort) },
+          target: { host: normalizedTargetHost, port: Number(targetPort) },
+        };
+
     const data: Tunnel = {
       id: tunnel?.id || crypto.randomUUID(),
-      name,
-      description: description || undefined,
+      name: name.trim(),
+      description: description.trim() || undefined,
       groupId: groupId || undefined,
-      tunnelType,
-      sshHost,
+      sshHost: sshHost.trim(),
       sshPort: Number(sshPort),
-      sshUser,
-      sshIdentityFile: sshIdentityFile || undefined,
+      sshUser: sshUser.trim(),
+      sshIdentityFile: sshIdentityFile.trim() || undefined,
       sshPassword: sshPassword || undefined,
       jumpHostEnabled,
-      jumpHost: jumpHostEnabled ? jumpHost : undefined,
+      jumpHost: jumpHostEnabled ? jumpHost.trim() : undefined,
       jumpPort: jumpHostEnabled ? Number(jumpPort) : undefined,
-      jumpUser: jumpHostEnabled ? jumpUser : undefined,
-      jumpIdentityFile: jumpHostEnabled && jumpIdentityFile ? jumpIdentityFile : undefined,
+      jumpUser: jumpHostEnabled ? jumpUser.trim() : undefined,
+      jumpIdentityFile: jumpHostEnabled && jumpIdentityFile.trim() ? jumpIdentityFile.trim() : undefined,
       jumpPassword: jumpHostEnabled && jumpPassword ? jumpPassword : undefined,
-      localHost: localHost || "127.0.0.1",
-      localPort: Number(localPort),
-      remoteHost: tunnelType === "local" ? remoteHost : undefined,
-      remotePort: (tunnelType === "local" || tunnelType === "remote") ? Number(remotePort) : undefined,
+      forward,
       startWithApp,
       autoReconnect,
       retryCount: Number(retryCount),
@@ -513,8 +527,8 @@ export default function TunnelForm({
                 <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">{t("forwardingType")}</label>
                 <div className="relative">
                   <select
-                    value={tunnelType}
-                    onChange={(e) => setTunnelType(e.target.value as TunnelType)}
+                    value={forwardKind}
+                    onChange={(e) => setForwardKind(e.target.value as ForwardKind)}
                     className="w-full px-3 py-2 pr-8 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500 appearance-none text-gray-900 dark:text-white cursor-pointer"
                   >
                     <option value="local">{t("localForward")}</option>
@@ -528,7 +542,7 @@ export default function TunnelForm({
               </div>
 
               {/* ── LOCAL PORT FORWARDING ── */}
-              {tunnelType === "local" && (
+              {forwardKind === "local" && (
                 <div className="space-y-3">
                   {/* Visual flow */}
                   <div className="flex items-center gap-1.5 text-[10px] font-medium select-none px-0.5">
@@ -545,17 +559,17 @@ export default function TunnelForm({
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">监听地址</label>
-                        <CompositionInput type="text" value={localHost} onValueChange={setLocalHost}
+                        <CompositionInput type="text" value={listenHost} onValueChange={setListenHost}
                           className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500" />
                         <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-0.5">通常保持 127.0.0.1 不变</p>
                       </div>
                       <div>
                         <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">本机端口 <span className="text-red-400">*</span></label>
-                        <input type="number" placeholder="如 13306" value={localPort || ""}
-                          onChange={(e) => setLocalPort(e.target.value === "" ? "" : Number(e.target.value))}
+                        <input type="number" placeholder="如 13306" value={listenPort || ""}
+                          onChange={(e) => setListenPort(e.target.value === "" ? "" : Number(e.target.value))}
                           className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500" />
                         <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-0.5">你在本机访问的端口号</p>
-                        {errors.localPort && <p className="text-[10px] text-red-500 mt-1">{errors.localPort}</p>}
+                        {errors.listenPort && <p className="text-[10px] text-red-500 mt-1">{errors.listenPort}</p>}
                       </div>
                     </div>
                   </div>
@@ -566,19 +580,19 @@ export default function TunnelForm({
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">目标主机 <span className="text-red-400">*</span></label>
-                        <CompositionInput type="text" placeholder="如 localhost 或 db.internal" value={remoteHost}
-                          onValueChange={setRemoteHost}
+                        <CompositionInput type="text" placeholder="如 localhost 或 db.internal" value={targetHost}
+                          onValueChange={setTargetHost}
                           className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500" />
                         <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-0.5">SSH 服务器能访问到的主机</p>
-                        {errors.remoteHost && <p className="text-[10px] text-red-500 mt-1">{errors.remoteHost}</p>}
+                        {errors.targetHost && <p className="text-[10px] text-red-500 mt-1">{errors.targetHost}</p>}
                       </div>
                       <div>
                         <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">目标端口 <span className="text-red-400">*</span></label>
-                        <input type="number" placeholder="如 3306" value={remotePort || ""}
-                          onChange={(e) => setRemotePort(e.target.value === "" ? "" : Number(e.target.value))}
+                        <input type="number" placeholder="如 3306" value={targetPort || ""}
+                          onChange={(e) => setTargetPort(e.target.value === "" ? "" : Number(e.target.value))}
                           className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500" />
                         <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-0.5">目标服务监听的端口</p>
-                        {errors.remotePort && <p className="text-[10px] text-red-500 mt-1">{errors.remotePort}</p>}
+                        {errors.targetPort && <p className="text-[10px] text-red-500 mt-1">{errors.targetPort}</p>}
                       </div>
                     </div>
                   </div>
@@ -586,7 +600,7 @@ export default function TunnelForm({
               )}
 
               {/* ── REMOTE PORT FORWARDING ── */}
-              {tunnelType === "remote" && (
+              {forwardKind === "remote" && (
                 <div className="space-y-3">
                   <div className="flex items-center gap-1.5 text-[10px] font-medium select-none px-0.5">
                     <span className="px-2 py-0.5 rounded bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 font-semibold border border-amber-100 dark:border-amber-900/40">外部访问者</span>
@@ -602,17 +616,17 @@ export default function TunnelForm({
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">服务器绑定地址</label>
-                        <CompositionInput type="text" value={localHost} onValueChange={setLocalHost}
+                        <CompositionInput type="text" value={listenHost} onValueChange={setListenHost}
                           className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500" />
                         <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-0.5">SSH 服务器上绑定的地址</p>
                       </div>
                       <div>
                         <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">服务器端口 <span className="text-red-400">*</span></label>
-                        <input type="number" placeholder="如 8080" value={localPort || ""}
-                          onChange={(e) => setLocalPort(e.target.value === "" ? "" : Number(e.target.value))}
+                        <input type="number" placeholder="如 8080" value={listenPort || ""}
+                          onChange={(e) => setListenPort(e.target.value === "" ? "" : Number(e.target.value))}
                           className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500" />
                         <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-0.5">外部通过此端口访问</p>
-                        {errors.localPort && <p className="text-[10px] text-red-500 mt-1">{errors.localPort}</p>}
+                        {errors.listenPort && <p className="text-[10px] text-red-500 mt-1">{errors.listenPort}</p>}
                       </div>
                     </div>
                   </div>
@@ -623,18 +637,19 @@ export default function TunnelForm({
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">本机地址</label>
-                        <CompositionInput type="text" placeholder="如 localhost" value={remoteHost}
-                          onValueChange={setRemoteHost}
+                        <CompositionInput type="text" placeholder="如 localhost" value={targetHost}
+                          onValueChange={setTargetHost}
                           className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500" />
                         <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-0.5">你本机上的服务地址</p>
+                        {errors.targetHost && <p className="text-[10px] text-red-500 mt-1">{errors.targetHost}</p>}
                       </div>
                       <div>
                         <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">本机端口 <span className="text-red-400">*</span></label>
-                        <input type="number" placeholder="如 3000" value={remotePort || ""}
-                          onChange={(e) => setRemotePort(e.target.value === "" ? "" : Number(e.target.value))}
+                        <input type="number" placeholder="如 3000" value={targetPort || ""}
+                          onChange={(e) => setTargetPort(e.target.value === "" ? "" : Number(e.target.value))}
                           className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500" />
                         <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-0.5">你本机服务的端口号</p>
-                        {errors.remotePort && <p className="text-[10px] text-red-500 mt-1">{errors.remotePort}</p>}
+                        {errors.targetPort && <p className="text-[10px] text-red-500 mt-1">{errors.targetPort}</p>}
                       </div>
                     </div>
                   </div>
@@ -642,7 +657,7 @@ export default function TunnelForm({
               )}
 
               {/* ── SOCKS5 PROXY ── */}
-              {tunnelType === "socks5" && (
+              {forwardKind === "socks5" && (
                 <div className="space-y-3">
                   <div className="flex items-center gap-1.5 text-[10px] font-medium select-none px-0.5">
                     <span className="px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 font-semibold border border-indigo-100 dark:border-indigo-900/40">本机代理端口</span>
@@ -656,17 +671,17 @@ export default function TunnelForm({
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">监听地址</label>
-                        <CompositionInput type="text" value={localHost} onValueChange={setLocalHost}
+                        <CompositionInput type="text" value={listenHost} onValueChange={setListenHost}
                           className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500" />
                         <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-0.5">通常保持 127.0.0.1 不变</p>
                       </div>
                       <div>
                         <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">代理端口 <span className="text-red-400">*</span></label>
-                        <input type="number" placeholder="如 1080" value={localPort || ""}
-                          onChange={(e) => setLocalPort(e.target.value === "" ? "" : Number(e.target.value))}
+                        <input type="number" placeholder="如 1080" value={listenPort || ""}
+                          onChange={(e) => setListenPort(e.target.value === "" ? "" : Number(e.target.value))}
                           className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500" />
                         <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-0.5">在系统或浏览器中配置此端口为代理</p>
-                        {errors.localPort && <p className="text-[10px] text-red-500 mt-1">{errors.localPort}</p>}
+                        {errors.listenPort && <p className="text-[10px] text-red-500 mt-1">{errors.listenPort}</p>}
                       </div>
                     </div>
                   </div>

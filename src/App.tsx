@@ -24,7 +24,7 @@ export default function App() {
 
 function AppContent() {
   const { t } = useLanguage();
-  const [config, setConfig] = useState<AppConfig>({ version: 1, groups: [], tunnels: [] });
+  const [config, setConfig] = useState<AppConfig>({ version: 2, groups: [], tunnels: [] });
   const [selectedTunnelId, setSelectedTunnelId] = useState<string | null>(null);
   const [statuses, setStatuses] = useState<Record<string, TunnelStatus>>({});
   const statusesRef = useRef(statuses);

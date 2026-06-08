@@ -125,7 +125,7 @@ export default function TunnelOverview({
     const totalCount = tunnels.length;
     const runningTunnels = tunnels.filter(t => statuses[t.id] === "running");
     const runningCount = runningTunnels.length;
-    const activePorts = runningTunnels.map(t => t.localPort);
+    const activePorts = runningTunnels.map(t => t.forward.listen.port);
     const failedTunnels = tunnels.filter(t => statuses[t.id] === "failed");
     const failedCount = failedTunnels.length;
     const isHealthy = failedCount === 0;
@@ -160,7 +160,7 @@ export default function TunnelOverview({
               <Link className="w-6 h-6" />
             </span>
             <div className="min-w-0 flex-1">
-              <span className="text-[10px] uppercase font-bold tracking-wider text-gray-400 dark:text-neutral-500 block">{t("localPorts")}</span>
+              <span className="text-[10px] uppercase font-bold tracking-wider text-gray-400 dark:text-neutral-500 block">{t("listenerPorts")}</span>
               <span className="text-xl font-bold text-gray-800 dark:text-neutral-100 block truncate">
                 {activePorts.length}
               </span>
@@ -261,6 +261,11 @@ export default function TunnelOverview({
     );
   }
 
+  const kind = tunnel.forward.kind;
+  const listen = tunnel.forward.listen;
+  const target = kind === "socks5" ? undefined : tunnel.forward.target;
+  const forwardLabel = kind === "socks5" ? t("socks5Forward") : (kind === "local" ? t("localForward") : t("remoteForward"));
+
   // RENDER 2: TUNNEL SELECTED PANEL
   return (
     <div className="flex-1 flex flex-col h-screen overflow-hidden bg-gray-50 dark:bg-neutral-950">
@@ -275,7 +280,7 @@ export default function TunnelOverview({
             </span>
           </div>
           <p className="text-[11px] text-gray-500 dark:text-neutral-400">
-            {tunnel.tunnelType === "socks5" ? t("socks5Forward") : (tunnel.tunnelType === "local" ? t("localForward") : t("remoteForward"))} • {tunnel.sshUser}@{tunnel.sshHost}
+            {forwardLabel} • {tunnel.sshUser}@{tunnel.sshHost}
           </p>
         </div>
 
@@ -338,26 +343,24 @@ export default function TunnelOverview({
               {/* Card 1: Listener */}
               <div className="p-4 bg-white dark:bg-neutral-900 border border-gray-200 dark:border-neutral-800 rounded-xl">
                 <span className="text-[10px] uppercase font-bold tracking-wider text-gray-400 dark:text-neutral-500 block mb-1">
-                  {tunnel.tunnelType === "remote" ? t("remoteListener") : t("localListener")}
+                  {kind === "remote" ? t("remoteListener") : t("localListener")}
                 </span>
                 <div className="flex items-center gap-2 text-xs font-semibold text-gray-800 dark:text-neutral-200">
-                  <span className="truncate">{tunnel.localHost || "127.0.0.1"}:{tunnel.localPort}</span>
+                  <span className="truncate">{listen.host}:{listen.port}</span>
                 </div>
               </div>
 
               {/* Card 2: Destination / Routing */}
               <div className="p-4 bg-white dark:bg-neutral-900 border border-gray-200 dark:border-neutral-800 rounded-xl">
                 <span className="text-[10px] uppercase font-bold tracking-wider text-gray-400 dark:text-neutral-500 block mb-1">
-                  {tunnel.tunnelType === "local" ? t("remoteDest") : (tunnel.tunnelType === "remote" ? t("localDest") : t("dynamicRouting"))}
+                  {kind === "local" ? t("remoteDest") : (kind === "remote" ? t("localDest") : t("dynamicRouting"))}
                 </span>
                 <div className="flex items-center gap-2 text-xs font-semibold text-indigo-600 dark:text-indigo-400">
-                  {tunnel.tunnelType === "socks5" ? (
+                  {kind === "socks5" ? (
                     <span className="truncate">{t("socks5Forward")}</span>
-                  ) : tunnel.tunnelType === "remote" ? (
-                    <span className="truncate">{tunnel.remoteHost || "127.0.0.1"}:{tunnel.remotePort}</span>
-                  ) : (
-                    <span className="truncate">{tunnel.remoteHost}:{tunnel.remotePort}</span>
-                  )}
+                  ) : target ? (
+                    <span className="truncate">{target.host}:{target.port}</span>
+                  ) : null}
                 </div>
               </div>
 
@@ -401,20 +404,20 @@ export default function TunnelOverview({
                     { label: t("user"), value: tunnel.sshUser },
                   ];
 
-                  if (tunnel.tunnelType === "local") {
+                  if (kind === "local") {
                     items.push(
-                      { label: t("localListener"), value: `${tunnel.localHost || "127.0.0.1"}:${tunnel.localPort}` },
-                      { label: t("remoteDest"), value: `${tunnel.remoteHost}:${tunnel.remotePort}` }
+                      { label: t("localListener"), value: `${listen.host}:${listen.port}` },
+                      { label: t("remoteDest"), value: target ? `${target.host}:${target.port}` : "-" }
                     );
-                  } else if (tunnel.tunnelType === "remote") {
+                  } else if (kind === "remote") {
                     items.push(
-                      { label: t("remoteListener"), value: `${tunnel.localHost || "127.0.0.1"}:${tunnel.localPort}` },
-                      { label: t("localDest"), value: `${tunnel.remoteHost || "127.0.0.1"}:${tunnel.remotePort}` }
+                      { label: t("remoteListener"), value: `${listen.host}:${listen.port}` },
+                      { label: t("localDest"), value: target ? `${target.host}:${target.port}` : "-" }
                     );
                   } else {
                     // socks5
                     items.push(
-                      { label: t("localListener"), value: `${tunnel.localHost || "127.0.0.1"}:${tunnel.localPort}` },
+                      { label: t("localListener"), value: `${listen.host}:${listen.port}` },
                       { label: t("dynamicRouting"), value: t("socks5Forward") }
                     );
                   }
@@ -422,9 +425,7 @@ export default function TunnelOverview({
                   items.push(
                     {
                       label: t("forwardingType"),
-                      value: tunnel.tunnelType === "socks5"
-                        ? t("socks5Forward")
-                        : (tunnel.tunnelType === "local" ? t("localForward") : t("remoteForward"))
+                      value: forwardLabel
                     },
                     {
                       label: t("autoReconnect"),
@@ -452,12 +453,14 @@ export default function TunnelOverview({
             </div>
 
             {/* Quick action warnings */}
-            {tunnel.localPort < 1024 && (
+            {listen.port < 1024 && (
               <div className="p-3.5 border border-amber-100 dark:border-amber-950/50 bg-amber-50/30 dark:bg-amber-950/10 rounded-lg flex gap-2.5 text-xs text-amber-800 dark:text-amber-300">
                 <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
                 <div>
                   <span className="font-semibold block mb-0.5">Privileged Port Warning</span>
-                  <span>Port {tunnel.localPort} is less than 1024. Binding to privileged ports requires root privileges on Unix/macOS. You may need to change this port to &gt;= 1024 if start fails.</span>
+                  <span>{kind === "remote"
+                    ? `Listen port ${listen.port} is less than 1024. Binding to privileged ports on the remote SSH server may require server-side privileges or SSH server configuration.`
+                    : `Listen port ${listen.port} is less than 1024. Binding to privileged ports requires root privileges on Unix/macOS. You may need to change this port to >= 1024 if start fails.`}</span>
                 </div>
               </div>
             )}

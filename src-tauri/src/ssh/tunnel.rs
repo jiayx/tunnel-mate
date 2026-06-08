@@ -1,4 +1,4 @@
-use crate::config::{Tunnel, TunnelType};
+use crate::config::{ForwardSpec, Tunnel};
 use crate::ssh::engine::{ForwardedTcp, SharedSshHandle};
 use crate::ssh::socks5::negotiate_socks5;
 use std::net::TcpListener as StdTcpListener;
@@ -27,31 +27,23 @@ impl TunnelWorker {
         log_sender: tauri::ipc::Channel<String>,
     ) -> Result<Self, String> {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        let tunnel_type = tunnel.tunnel_type.clone();
-        let local_host = tunnel
-            .local_host
-            .clone()
-            .unwrap_or_else(|| "127.0.0.1".to_string());
-        let local_port = tunnel.local_port;
-        let remote_host = tunnel.remote_host.clone().unwrap_or_default();
-        let remote_port = tunnel.remote_port.unwrap_or(0);
 
-        let (task, remote_forward) = match tunnel_type {
-            TunnelType::Local => {
-                let bind_addr = format!("{}:{}", local_host, local_port);
+        let (task, remote_forward) = match &tunnel.forward {
+            ForwardSpec::Local { listen, target } => {
+                let bind_addr = format!("{}:{}", listen.host, listen.port);
                 let listener = bind_tcp_listener(&bind_addr).await?;
                 let task = tokio::spawn(run_local_forward(
                     listener,
                     handle,
-                    remote_host,
-                    remote_port,
+                    target.host.clone(),
+                    target.port,
                     shutdown_rx,
                     log_sender,
                 ));
                 (task, None)
             }
-            TunnelType::Socks5 => {
-                let bind_addr = format!("{}:{}", local_host, local_port);
+            ForwardSpec::Socks5 { listen } => {
+                let bind_addr = format!("{}:{}", listen.host, listen.port);
                 let listener = bind_tcp_listener(&bind_addr).await?;
                 let task = tokio::spawn(run_socks5_forward(
                     listener,
@@ -61,24 +53,30 @@ impl TunnelWorker {
                 ));
                 (task, None)
             }
-            TunnelType::Remote => {
-                let bind_addr = "127.0.0.1".to_string();
-                let requested_port = remote_port as u32;
+            ForwardSpec::Remote { listen, target } => {
                 send_log(
                     &log_sender,
                     format!(
-                        "[INFO] Requesting Remote Forward to listen on remote port {}...",
-                        requested_port
+                        "[INFO] Requesting Remote Forward to listen on SSH server {}:{}...",
+                        listen.host, listen.port
+                    ),
+                );
+                send_log(
+                    &log_sender,
+                    format!(
+                        "[INFO] Remote Forward will send traffic to target {}:{}",
+                        target.host, target.port
                     ),
                 );
 
+                let requested_port = listen.port as u32;
                 let allocated_port = handle
                     .lock()
                     .await
-                    .tcpip_forward(bind_addr.clone(), requested_port)
+                    .tcpip_forward(listen.host.clone(), requested_port)
                     .await
                     .map_err(|e| format!("Remote forward listen request failed: {}", e))?;
-                let port = if requested_port == 0 {
+                let active_port = if requested_port == 0 {
                     allocated_port
                 } else {
                     requested_port
@@ -87,9 +85,9 @@ impl TunnelWorker {
                     .ok_or_else(|| "Remote forward receiver is unavailable".to_string())?;
                 let task = tokio::spawn(run_remote_forward(
                     forwarded_rx,
-                    local_host,
-                    local_port,
-                    port,
+                    target.host.clone(),
+                    target.port,
+                    active_port,
                     shutdown_rx,
                     log_sender,
                 ));
@@ -97,8 +95,8 @@ impl TunnelWorker {
                     task,
                     Some(RemoteForward {
                         handle,
-                        bind_addr,
-                        port,
+                        bind_addr: listen.host.clone(),
+                        port: active_port,
                     }),
                 )
             }
@@ -128,7 +126,7 @@ impl TunnelWorker {
 
 async fn bind_tcp_listener(bind_addr: &str) -> Result<TcpListener, String> {
     let std_listener = StdTcpListener::bind(bind_addr)
-        .map_err(|e| format!("Failed to bind local port {}: {}", bind_addr, e))?;
+        .map_err(|e| format!("Failed to bind local listener {}: {}", bind_addr, e))?;
     std_listener
         .set_nonblocking(true)
         .map_err(|e| format!("Failed to set listener nonblocking: {}", e))?;
@@ -138,16 +136,16 @@ async fn bind_tcp_listener(bind_addr: &str) -> Result<TcpListener, String> {
 async fn run_local_forward(
     listener: TcpListener,
     handle: SharedSshHandle,
-    remote_host: String,
-    remote_port: u16,
+    target_host: String,
+    target_port: u16,
     mut shutdown_rx: watch::Receiver<bool>,
     log: tauri::ipc::Channel<String>,
 ) {
     send_log(
         &log,
         format!(
-            "[INFO] Starting Local Forward to {}:{}...",
-            remote_host, remote_port
+            "[INFO] Starting Local Forward to target {}:{}...",
+            target_host, target_port
         ),
     );
 
@@ -157,7 +155,7 @@ async fn run_local_forward(
                 match res {
                     Ok((socket, addr)) => {
                         send_log(&log, format!("[INFO] Accepted connection from {}", addr));
-                        tokio::spawn(pipe_local_connection(socket, handle.clone(), remote_host.clone(), remote_port, log.clone()));
+                        tokio::spawn(pipe_local_connection(socket, handle.clone(), target_host.clone(), target_port, log.clone()));
                     }
                     Err(e) => send_log(&log, format!("[ERROR] Accept error: {}", e)),
                 }
@@ -173,22 +171,22 @@ async fn run_local_forward(
 async fn pipe_local_connection(
     mut socket: TcpStream,
     handle: SharedSshHandle,
-    remote_host: String,
-    remote_port: u16,
+    target_host: String,
+    target_port: u16,
     log: tauri::ipc::Channel<String>,
 ) {
     match handle
         .lock()
         .await
-        .channel_open_direct_tcpip(remote_host.clone(), remote_port as u32, "127.0.0.1", 0)
+        .channel_open_direct_tcpip(target_host.clone(), target_port as u32, "127.0.0.1", 0)
         .await
     {
         Ok(channel) => {
             send_log(
                 &log,
                 format!(
-                    "[INFO] Forwarding to {}:{} via SSH",
-                    remote_host, remote_port
+                    "[INFO] Forwarding to target {}:{} via SSH",
+                    target_host, target_port
                 ),
             );
             let mut stream = channel.into_stream();
@@ -241,21 +239,24 @@ async fn run_socks5_forward(
 
 async fn run_remote_forward(
     mut forwarded_rx: mpsc::UnboundedReceiver<ForwardedTcp>,
-    local_host: String,
-    local_port: u16,
-    remote_port: u32,
+    target_host: String,
+    target_port: u16,
+    remote_listen_port: u32,
     mut shutdown_rx: watch::Receiver<bool>,
     log: tauri::ipc::Channel<String>,
 ) {
     send_log(
         &log,
-        "[INFO] Remote Forward listener started on remote SSH server".to_string(),
+        format!(
+            "[INFO] Remote Forward listener started on SSH server port {}",
+            remote_listen_port
+        ),
     );
 
     loop {
         tokio::select! {
             Some(forwarded) = forwarded_rx.recv() => {
-                let target = format!("{}:{}", local_host, local_port);
+                let target = format!("{}:{}", target_host, target_port);
                 send_log(
                     &log,
                     format!(
@@ -273,7 +274,7 @@ async fn run_remote_forward(
                 break;
             }
             else => {
-                send_log(&log, format!("[INFO] Remote Forward on port {} closed", remote_port));
+                send_log(&log, format!("[INFO] Remote Forward on port {} closed", remote_listen_port));
                 break;
             }
         }
@@ -286,13 +287,10 @@ async fn pipe_remote_connection(
     log: tauri::ipc::Channel<String>,
 ) {
     match TcpStream::connect(&target).await {
-        Ok(mut local_stream) => {
-            send_log(
-                &log,
-                format!("[INFO] Connected to local forward target {}", target),
-            );
+        Ok(mut target_stream) => {
+            send_log(&log, format!("[INFO] Connected to target {}", target));
             let mut ssh_stream = forwarded.channel.into_stream();
-            if let Err(e) = copy_bidirectional(&mut ssh_stream, &mut local_stream).await {
+            if let Err(e) = copy_bidirectional(&mut ssh_stream, &mut target_stream).await {
                 send_log(
                     &log,
                     format!("[ERROR] Remote forwarding stream failed: {}", e),
@@ -301,10 +299,7 @@ async fn pipe_remote_connection(
         }
         Err(e) => send_log(
             &log,
-            format!(
-                "[ERROR] Failed to connect to local target {}: {}",
-                target, e
-            ),
+            format!("[ERROR] Failed to connect to target {}: {}", target, e),
         ),
     }
 }
@@ -329,7 +324,7 @@ mod tests {
 
         let err = bind_tcp_listener(&addr).await.unwrap_err();
 
-        assert!(err.contains("Failed to bind local port"));
+        assert!(err.contains("Failed to bind local listener"));
         assert!(err.contains(&addr));
     }
 

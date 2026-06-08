@@ -273,7 +273,7 @@ export default function Sidebar({
   const filteredTunnels = tunnels.filter(t => 
     t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     t.sshHost.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    t.tunnelType.toLowerCase().includes(searchQuery.toLowerCase())
+    t.forward.kind.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   // Group tunnels
@@ -425,7 +425,7 @@ export default function Sidebar({
                           <span className="truncate">{t.name}</span>
                         </div>
                         <span className="text-[9px] uppercase tracking-wider text-gray-400 dark:text-neutral-500 pointer-events-none">
-                          {t.tunnelType === "socks5" ? "S5" : t.tunnelType}
+                          {t.forward.kind === "socks5" ? "S5" : t.forward.kind}
                         </span>
                       </button>
                     ))}
@@ -456,7 +456,7 @@ export default function Sidebar({
                 <span className="truncate">{t.name}</span>
               </div>
               <span className="text-[9px] uppercase tracking-wider text-gray-400 dark:text-neutral-500 pointer-events-none">
-                {t.tunnelType === "socks5" ? "SOCKS5" : t.tunnelType}
+                {t.forward.kind === "socks5" ? "SOCKS5" : t.forward.kind}
               </span>
             </button>
           ))}
@@ -737,7 +737,7 @@ export default function Sidebar({
             <span className="truncate font-medium">{draggedTunnel.name}</span>
           </div>
           <span className="shrink-0 text-[9px] uppercase tracking-wider text-gray-400 dark:text-neutral-500">
-            {draggedTunnel.tunnelType === "socks5" ? "S5" : draggedTunnel.tunnelType}
+            {draggedTunnel.forward.kind === "socks5" ? "S5" : draggedTunnel.forward.kind}
           </span>
         </div>
       )}
