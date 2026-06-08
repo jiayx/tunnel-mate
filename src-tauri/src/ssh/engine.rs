@@ -282,32 +282,41 @@ async fn authenticate_key_file(
 }
 
 async fn try_agent_auth(handle: &mut SshHandle, user: &str) -> Result<bool, String> {
-    let mut agent = match AgentClient::connect_env().await {
-        Ok(agent) => agent,
-        Err(_) => return Ok(false),
-    };
+    #[cfg(unix)]
+    {
+        let mut agent = match AgentClient::connect_env().await {
+            Ok(agent) => agent,
+            Err(_) => return Ok(false),
+        };
 
-    let identities = match agent.request_identities().await {
-        Ok(ids) => ids,
-        Err(_) => return Ok(false),
-    };
+        let identities = match agent.request_identities().await {
+            Ok(ids) => ids,
+            Err(_) => return Ok(false),
+        };
 
-    let hash_alg = handle
-        .best_supported_rsa_hash()
-        .await
-        .map_err(|e| format!("Failed to negotiate RSA signature algorithm: {}", e))?
-        .flatten();
-
-    for identity in identities {
-        let public_key = identity.public_key().into_owned();
-        match handle
-            .authenticate_publickey_with(user, public_key, hash_alg, &mut agent)
+        let hash_alg = handle
+            .best_supported_rsa_hash()
             .await
-        {
-            Ok(auth) if auth.success() => return Ok(true),
-            Ok(_) => {}
-            Err(_) => {}
+            .map_err(|e| format!("Failed to negotiate RSA signature algorithm: {}", e))?
+            .flatten();
+
+        for identity in identities {
+            let public_key = identity.public_key().into_owned();
+            match handle
+                .authenticate_publickey_with(user, public_key, hash_alg, &mut agent)
+                .await
+            {
+                Ok(auth) if auth.success() => return Ok(true),
+                Ok(_) => {}
+                Err(_) => {}
+            }
         }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = handle;
+        let _ = user;
     }
 
     Ok(false)
