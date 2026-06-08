@@ -253,6 +253,7 @@ pub fn run() {
     let manager = Arc::new(Mutex::new(TunnelManager::new()));
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(TunnelState(manager))
