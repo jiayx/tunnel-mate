@@ -129,10 +129,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         with:
-          # Only create a GitHub Release draft when pushing a version tag (e.g. v0.1.0)
-          tagName: ${{ startsWith(github.ref, 'refs/tags/v') && 'app-v__VERSION__' || '' }}
-          releaseName: ${{ startsWith(github.ref, 'refs/tags/v') && 'App v__VERSION__' || '' }}
-          releaseDraft: true
+          # Publish a GitHub Release for the pushed version tag (e.g. v0.1.0)
+          tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
 
