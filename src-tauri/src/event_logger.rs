@@ -10,6 +10,7 @@ use uuid::Uuid;
 pub enum EventType {
     Created,
     Updated,
+    Connecting,
     Started,
     Stopped,
     Restarted,
@@ -22,6 +23,7 @@ pub enum EventType {
 #[serde(rename_all = "camelCase")]
 pub struct LogEvent {
     pub id: String,
+    pub session_id: Option<String>,
     pub timestamp: DateTime<Utc>,
     pub tunnel_id: Option<String>,
     pub tunnel_name: Option<String>,
@@ -47,8 +49,20 @@ impl EventLogger {
         event_type: EventType,
         message: String,
     ) -> Result<LogEvent, String> {
+        self.log_with_session(None, tunnel_id, tunnel_name, event_type, message)
+    }
+
+    pub fn log_with_session(
+        &self,
+        session_id: Option<String>,
+        tunnel_id: Option<String>,
+        tunnel_name: Option<String>,
+        event_type: EventType,
+        message: String,
+    ) -> Result<LogEvent, String> {
         let event = LogEvent {
             id: Uuid::new_v4().to_string(),
+            session_id,
             timestamp: Utc::now(),
             tunnel_id,
             tunnel_name,

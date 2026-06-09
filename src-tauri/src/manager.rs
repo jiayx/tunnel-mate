@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tauri::{ipc::Channel, AppHandle, Emitter};
 use tokio::sync::Mutex;
+use uuid::Uuid;
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,6 +21,7 @@ pub struct ActiveTunnel {
     pub tunnel: Tunnel,
     pub worker: TunnelWorker,
     pub log_channel: LogSink,
+    pub session_id: String,
     ssh_session: SshSession,
 }
 
@@ -57,7 +59,10 @@ impl TunnelManager {
             app,
             tunnel,
             passphrase,
-            LogSink::Channel(log_channel),
+            LogSink::Channel {
+                channel: log_channel,
+                session_id: String::new(),
+            },
             0,
         )
         .await
@@ -80,7 +85,15 @@ impl TunnelManager {
         reconnect_attempt: u32,
     ) -> Result<(), String> {
         let tunnel_id = tunnel.id.clone();
+        let session_id = Uuid::new_v4().to_string();
         let logger = EventLogger::new();
+        let log_channel = match log_channel {
+            LogSink::Channel { channel, .. } => LogSink::Channel {
+                channel,
+                session_id: session_id.clone(),
+            },
+            LogSink::Silent => LogSink::Silent,
+        };
 
         // 1. Check if already running
         {
@@ -104,10 +117,13 @@ impl TunnelManager {
             TunnelStatus::Connecting,
             Some("Connecting to SSH host...".to_string()),
         );
-        let _ = logger.log(
+        let _ = emit_activity_event(
+            &app,
+            &logger,
+            Some(session_id.clone()),
             Some(tunnel_id.clone()),
             Some(tunnel.name.clone()),
-            EventType::Started,
+            EventType::Connecting,
             "Tunnel connection starting...".to_string(),
         );
 
@@ -154,6 +170,7 @@ impl TunnelManager {
         let m_state = manager_state.clone();
         let app_handle = app.clone();
         let passphrase_conn = passphrase.clone();
+        let session_id_task = session_id.clone();
 
         // Run connection in separate task to prevent blocking GUI
         tokio::spawn(async move {
@@ -176,7 +193,10 @@ impl TunnelManager {
                 Ok(sess) => sess,
                 Err(err_msg) => {
                     log_ch.send(format!("[ERROR] Connection failed: {}", err_msg));
-                    let _ = logger.log(
+                    let _ = emit_activity_event(
+                        &app_handle,
+                        &logger,
+                        Some(session_id_task.clone()),
                         Some(tunnel_id.clone()),
                         Some(tunnel.name.clone()),
                         EventType::Failed,
@@ -233,7 +253,10 @@ impl TunnelManager {
                     Err(e) => {
                         let err_msg = format!("Failed to start forwarding listeners: {}", e);
                         log_ch.send(format!("[ERROR] {}", err_msg));
-                        let _ = logger.log(
+                        let _ = emit_activity_event(
+                            &app_handle,
+                            &logger,
+                            Some(session_id_task.clone()),
                             Some(tunnel_id.clone()),
                             Some(tunnel.name.clone()),
                             EventType::Failed,
@@ -256,6 +279,7 @@ impl TunnelManager {
                 tunnel: tunnel.clone(),
                 worker,
                 log_channel: log_ch,
+                session_id: session_id_task.clone(),
                 ssh_session,
             };
 
@@ -268,7 +292,10 @@ impl TunnelManager {
             }
 
             emit_status(&app_handle, &tunnel_id, TunnelStatus::Running, None);
-            let _ = logger.log(
+            let _ = emit_activity_event(
+                &app_handle,
+                &logger,
+                Some(session_id_task.clone()),
                 Some(tunnel_id.clone()),
                 Some(tunnel.name.clone()),
                 EventType::Started,
@@ -292,13 +319,17 @@ impl TunnelManager {
 
         if let Some(mut active) = self.active_tunnels.remove(tunnel_id) {
             let name = active.tunnel.name.clone();
+            let session_id = active.session_id.clone();
             active
                 .log_channel
                 .send("[INFO] Stopping tunnel listeners...".to_string());
 
             active.worker.stop().await;
             active.ssh_session.disconnect().await;
-            let _ = logger.log(
+            let _ = emit_activity_event(
+                app,
+                &logger,
+                Some(session_id),
                 Some(tunnel_id.to_string()),
                 Some(name),
                 EventType::Stopped,
@@ -341,7 +372,10 @@ impl TunnelManager {
                 TunnelStatus::Failed,
                 Some("Max reconnect attempts reached".to_string()),
             );
-            let _ = logger.log(
+            let _ = emit_activity_event(
+                &app,
+                &logger,
+                None,
                 Some(tunnel_id.clone()),
                 Some(tunnel.name.clone()),
                 EventType::Failed,
@@ -380,7 +414,10 @@ impl TunnelManager {
             tokio::time::sleep(Duration::from_secs(interval as u64)).await;
 
             // Log attempt
-            let _ = logger.log(
+            let _ = emit_activity_event(
+                &app_task,
+                &logger,
+                None,
                 Some(tunnel_id_task.clone()),
                 Some(tunnel_task.name.clone()),
                 EventType::Reconnected,
@@ -456,7 +493,11 @@ impl TunnelManager {
                             None
                         };
 
-                    let _ = EventLogger::new().log(
+                    let logger = EventLogger::new();
+                    let _ = emit_activity_event(
+                        &app,
+                        &logger,
+                        None,
                         Some(tunnel_id.clone()),
                         Some(tunnel.name.clone()),
                         EventType::Failed,
@@ -508,4 +549,18 @@ fn emit_status(app: &AppHandle, tunnel_id: &str, status: TunnelStatus, message: 
     .ok();
 
     super::update_tray_menu(app);
+}
+
+fn emit_activity_event(
+    app: &AppHandle,
+    logger: &EventLogger,
+    session_id: Option<String>,
+    tunnel_id: Option<String>,
+    tunnel_name: Option<String>,
+    event_type: EventType,
+    message: String,
+) -> Result<crate::event_logger::LogEvent, String> {
+    let event = logger.log_with_session(session_id, tunnel_id, tunnel_name, event_type, message)?;
+    let _ = app.emit("activity-event-created", event.clone());
+    Ok(event)
 }

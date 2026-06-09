@@ -13,14 +13,22 @@ const FORWARD_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
 pub enum LogSink {
-    Channel(Channel<String>),
+    Channel {
+        channel: Channel<String>,
+        session_id: String,
+    },
     Silent,
 }
 
 impl LogSink {
     pub fn send(&self, message: String) {
-        if let LogSink::Channel(channel) = self {
-            let _ = channel.send(message);
+        if let LogSink::Channel {
+            channel,
+            session_id,
+        } = self
+        {
+            let short_session_id = session_id.get(..8).unwrap_or(session_id);
+            let _ = channel.send(format!("[session:{}] {}", short_session_id, message));
         }
     }
 }

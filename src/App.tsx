@@ -3,7 +3,8 @@ import { Channel } from "@tauri-apps/api/core";
 import { 
   getConfig, saveConfig, getEvents, startTunnel, stopTunnel, 
   getTunnelStatus, AppConfig, Tunnel, Group, TunnelStatus, LogEvent,
-  listenToStatusChanges, DiagnosticStep, testConnection, listenToTrayToggle
+  listenToStatusChanges, DiagnosticStep, testConnection, listenToTrayToggle,
+  listenToActivityEvents
 } from "./lib/tauri";
 import Sidebar from "./components/Sidebar";
 import TunnelOverview from "./components/TunnelOverview";
@@ -41,7 +42,6 @@ function AppContent() {
   const [selectedTunnelId, setSelectedTunnelId] = useState<string | null>(null);
   const [statuses, setStatuses] = useState<Record<string, TunnelStatus>>({});
   const statusesRef = useRef(statuses);
-  const refreshEventsTimerRef = useRef<number | null>(null);
   useEffect(() => {
     statusesRef.current = statuses;
   }, [statuses]);
@@ -88,17 +88,6 @@ function AppContent() {
       console.error("Failed to load initial config data:", e);
     }
   };
-
-  const refreshEvents = () => {
-    if (refreshEventsTimerRef.current !== null) {
-      window.clearTimeout(refreshEventsTimerRef.current);
-    }
-    refreshEventsTimerRef.current = window.setTimeout(() => {
-      refreshEventsTimerRef.current = null;
-      getEvents().then(evs => setEvents(evs));
-    }, 250);
-  };
-
 
   // Theme effect
   useEffect(() => {
@@ -192,7 +181,10 @@ function AppContent() {
     // 1. Listen to real-time status change events
     const unlistenStatus = listenToStatusChanges((payload) => {
       setStatuses(prev => ({ ...prev, [payload.tunnelId]: payload.status }));
-      refreshEvents();
+    });
+
+    const unlistenActivity = listenToActivityEvents((event) => {
+      setEvents(prev => [...prev.filter(existing => existing.id !== event.id), event]);
     });
 
     // 2. Listen to status bar tray menu toggle events
@@ -208,9 +200,7 @@ function AppContent() {
     return () => {
       unlistenStatus.then(f => f());
       unlistenTray.then(f => f());
-      if (refreshEventsTimerRef.current !== null) {
-        window.clearTimeout(refreshEventsTimerRef.current);
-      }
+      unlistenActivity.then(f => f());
     };
   }, []);
 
@@ -460,10 +450,7 @@ function AppContent() {
             setLogs(prev => ({ ...prev, [selectedTunnelId]: [] }));
           }
         }}
-        onRefreshEvents={() => {
-          getEvents().then(evs => setEvents(evs));
-        }}
-      />
+        />
 
       {/* NEW / EDIT TUNNEL FORM MODAL */}
       {showTunnelForm && (

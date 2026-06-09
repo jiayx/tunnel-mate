@@ -20,7 +20,6 @@ interface TunnelOverviewProps {
   onStop: () => void;
   onTestConnection: () => void;
   onClearLogs: () => void;
-  onRefreshEvents: () => void;
 }
 
 type PanelTab = "overview" | "logs" | "events";
@@ -36,7 +35,6 @@ export default function TunnelOverview({
   onStop,
   onTestConnection,
   onClearLogs,
-  onRefreshEvents,
 }: TunnelOverviewProps) {
   const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState<PanelTab>("overview");
@@ -103,6 +101,7 @@ export default function TunnelOverview({
     switch (type) {
       case "created": return <PlusCircle className="w-3.5 h-3.5 text-emerald-500" />;
       case "updated": return <Info className="w-3.5 h-3.5 text-indigo-500" />;
+      case "connecting": return <Clock className="w-3.5 h-3.5 text-amber-500" />;
       case "started": return <PlayCircle className="w-3.5 h-3.5 text-sky-500" />;
       case "stopped": return <Clock className="w-3.5 h-3.5 text-neutral-500" />;
       case "reconnected": return <ShieldCheck className="w-3.5 h-3.5 text-teal-500" />;
@@ -477,7 +476,7 @@ export default function TunnelOverview({
         {/* EVENTS TAB PANEL */}
         {activeTab === "events" && (
           <div className="h-[calc(100vh-210px)]">
-            <EventsViewer events={events.filter(e => e.tunnelId === tunnel.id)} onRefresh={onRefreshEvents} />
+            <EventsViewer events={events.filter(e => e.tunnelId === tunnel.id)} />
           </div>
         )}
 

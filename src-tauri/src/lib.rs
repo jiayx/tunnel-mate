@@ -155,12 +155,14 @@ fn import_config(app: AppHandle, config_str: String) -> Result<(), String> {
 
     // Log import event
     let logger = EventLogger::new();
-    let _ = logger.log(
+    if let Ok(event) = logger.log(
         None,
         None,
         EventType::Updated,
         "Configuration imported successfully".to_string(),
-    );
+    ) {
+        let _ = app.emit("activity-event-created", event);
+    }
 
     update_tray_menu(&app);
     Ok(())

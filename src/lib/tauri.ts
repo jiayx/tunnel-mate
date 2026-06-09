@@ -105,10 +105,11 @@ export interface DiagnosticStep {
 
 export interface LogEvent {
   id: string;
+  sessionId?: string;
   timestamp: string;
   tunnelId?: string;
   tunnelName?: string;
-  eventType: "created" | "updated" | "started" | "stopped" | "restarted" | "reconnected" | "failed" | "deleted";
+  eventType: "created" | "updated" | "connecting" | "started" | "stopped" | "restarted" | "reconnected" | "failed" | "deleted";
   message: string;
 }
 
@@ -175,6 +176,12 @@ export async function clearEvents(): Promise<void> {
 // Tauri Event Listeners
 export function listenToStatusChanges(callback: (payload: StatusPayload) => void) {
   return listen<StatusPayload>("tunnel-status-changed", (event: Event<StatusPayload>) => {
+    callback(event.payload);
+  });
+}
+
+export function listenToActivityEvents(callback: (event: LogEvent) => void) {
+  return listen<LogEvent>("activity-event-created", (event: Event<LogEvent>) => {
     callback(event.payload);
   });
 }
