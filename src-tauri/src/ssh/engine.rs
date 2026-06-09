@@ -1,7 +1,7 @@
 use crate::config::{ConfigStore, Tunnel};
 use russh::client::{self, Config, Handle, Msg};
-#[cfg(unix)]
 use russh::keys::agent::client::AgentClient;
+use russh::keys::agent::client::AgentStream;
 use russh::keys::key::PrivateKeyWithHashAlg;
 use russh::keys::ssh_key::known_hosts::{HostPatterns, KnownHosts, Marker};
 use russh::keys::{load_secret_key, ssh_key};
@@ -405,11 +405,45 @@ async fn authenticate_key_file(
 
 #[cfg(unix)]
 async fn try_agent_auth(handle: &mut SshHandle, user: &str) -> Result<bool, String> {
-    let mut agent = match AgentClient::connect_env().await {
+    let agent = match AgentClient::connect_env().await {
         Ok(agent) => agent,
         Err(_) => return Ok(false),
     };
 
+    authenticate_with_agent(handle, user, agent).await
+}
+
+#[cfg(windows)]
+async fn try_agent_auth(handle: &mut SshHandle, user: &str) -> Result<bool, String> {
+    const OPENSSH_AGENT_PIPE: &str = r"\\.\pipe\openssh-ssh-agent";
+
+    if let Ok(agent) = AgentClient::connect_named_pipe(OPENSSH_AGENT_PIPE).await {
+        if authenticate_with_agent(handle, user, agent).await? {
+            return Ok(true);
+        }
+    }
+
+    let agent = match AgentClient::connect_pageant().await {
+        Ok(agent) => agent,
+        Err(_) => return Ok(false),
+    };
+
+    authenticate_with_agent(handle, user, agent).await
+}
+
+#[cfg(not(any(unix, windows)))]
+async fn try_agent_auth(_handle: &mut SshHandle, _user: &str) -> Result<bool, String> {
+    Ok(false)
+}
+
+async fn authenticate_with_agent<S>(
+    handle: &mut SshHandle,
+    user: &str,
+    mut agent: AgentClient<S>,
+) -> Result<bool, String>
+where
+    S: AgentStream + Send + Unpin,
+{
     let identities = match agent.request_identities().await {
         Ok(ids) => ids,
         Err(_) => return Ok(false),
@@ -433,11 +467,6 @@ async fn try_agent_auth(handle: &mut SshHandle, user: &str) -> Result<bool, Stri
         }
     }
 
-    Ok(false)
-}
-
-#[cfg(not(unix))]
-async fn try_agent_auth(_handle: &mut SshHandle, _user: &str) -> Result<bool, String> {
     Ok(false)
 }
 
