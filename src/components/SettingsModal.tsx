@@ -9,12 +9,14 @@ import {
 } from "../lib/tauri";
 import { useLanguage } from "../lib/i18n";
 import { CompositionInput } from "./CompositionInput";
+import { useEscapeLayer } from "../hooks/useEscapeLayer";
 
 interface SettingsModalProps {
   theme: "light" | "dark" | "system";
   onThemeChange: (theme: "light" | "dark" | "system") => void;
   onClose: () => void;
   onConfigChanged: () => void;
+  onConfirm: (message: string, onConfirm: () => void) => void;
 }
 
 type TabType = "general" | "network" | "data";
@@ -51,7 +53,8 @@ export default function SettingsModal({
   theme, 
   onThemeChange, 
   onClose, 
-  onConfigChanged 
+  onConfigChanged,
+  onConfirm,
 }: SettingsModalProps) {
   const { language, setLanguage, t } = useLanguage();
   const [activeTab, setActiveTab] = useState<TabType>("general");
@@ -80,14 +83,7 @@ export default function SettingsModal({
       try {
         setLoading(true);
         const config = await getConfig();
-        const settings: GlobalSettings = config.settings || {
-          launchOnStartup: false,
-          startMinimized: false,
-          closeToTray: false,
-          keepAliveInterval: 30,
-          connectTimeout: 15,
-          sshConfigPath: "",
-        };
+        const settings: GlobalSettings = config.settings;
 
         setLaunchOnStartup(settings.launchOnStartup);
         setStartMinimized(settings.startMinimized);
@@ -105,16 +101,7 @@ export default function SettingsModal({
     loadSettings();
   }, []);
 
-  // Listen to Escape key to close modal
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  useEscapeLayer(true, onClose);
 
   const handleNumericChange = (
     val: string, 
@@ -171,7 +158,7 @@ export default function SettingsModal({
   };
 
   const handleClearEvents = async () => {
-    if (!confirm(t("btnDeleteConfirm"))) return;
+    onConfirm(t("btnDeleteConfirm"), async () => {
     try {
       setClearingEvents(true);
       setErrorMsg(null);
@@ -184,6 +171,7 @@ export default function SettingsModal({
     } finally {
       setClearingEvents(false);
     }
+    });
   };
 
   const handleExport = async () => {

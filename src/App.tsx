@@ -13,6 +13,8 @@ import SettingsModal from "./components/SettingsModal";
 import { Folder, X } from "lucide-react";
 import { LanguageProvider, useLanguage } from "./lib/i18n";
 import { CompositionInput } from "./components/CompositionInput";
+import { useAppFeedback } from "./hooks/useAppFeedback";
+import { useEscapeLayer } from "./hooks/useEscapeLayer";
 
 export default function App() {
   return (
@@ -24,10 +26,22 @@ export default function App() {
 
 function AppContent() {
   const { t } = useLanguage();
-  const [config, setConfig] = useState<AppConfig>({ version: 2, groups: [], tunnels: [] });
+  const [config, setConfig] = useState<AppConfig>({
+    version: 1,
+    groups: [],
+    tunnels: [],
+    settings: {
+      launchOnStartup: false,
+      startMinimized: false,
+      closeToTray: false,
+      keepAliveInterval: 30,
+      connectTimeout: 15,
+    },
+  });
   const [selectedTunnelId, setSelectedTunnelId] = useState<string | null>(null);
   const [statuses, setStatuses] = useState<Record<string, TunnelStatus>>({});
   const statusesRef = useRef(statuses);
+  const refreshEventsTimerRef = useRef<number | null>(null);
   useEffect(() => {
     statusesRef.current = statuses;
   }, [statuses]);
@@ -41,6 +55,7 @@ function AppContent() {
   const [diagnosticsInitialSteps, setDiagnosticsInitialSteps] = useState<DiagnosticStep[] | undefined>(undefined);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark" | "system">("system");
+  const { notice, confirmRequest, setConfirmRequest, showNotice, requestConfirm } = useAppFeedback();
 
   // Group Form state
   const [newGroupName, setNewGroupName] = useState("");
@@ -74,6 +89,16 @@ function AppContent() {
     }
   };
 
+  const refreshEvents = () => {
+    if (refreshEventsTimerRef.current !== null) {
+      window.clearTimeout(refreshEventsTimerRef.current);
+    }
+    refreshEventsTimerRef.current = window.setTimeout(() => {
+      refreshEventsTimerRef.current = null;
+      getEvents().then(evs => setEvents(evs));
+    }, 250);
+  };
+
 
   // Theme effect
   useEffect(() => {
@@ -87,22 +112,6 @@ function AppContent() {
       root.classList.add(theme);
     }
   }, [theme]);
-
-  // Close modals on Escape key
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setShowTunnelForm(false);
-        setPreselectedGroupId(undefined);
-        setShowGroupForm(false);
-        setEditingGroup(null);
-        setShowDiagnostics(false);
-        setShowSettingsModal(false);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
 
   const handleStartTunnel = async (id: string, passphrase?: string, skipDiagnostics = false) => {
     const tunnel = config.tunnels.find(t => t.id === id);
@@ -157,7 +166,7 @@ function AppContent() {
       await startTunnel(id, logChannel, passphrase);
     } catch (e) {
       setStatuses(prev => ({ ...prev, [id]: "failed" }));
-      alert("Failed to start tunnel: " + e);
+      showNotice("Failed to start tunnel: " + e, "error");
     }
   };
 
@@ -165,7 +174,7 @@ function AppContent() {
     try {
       await stopTunnel(id);
     } catch (e) {
-      alert("Failed to stop tunnel: " + e);
+      showNotice("Failed to stop tunnel: " + e, "error");
     }
   };
 
@@ -183,9 +192,7 @@ function AppContent() {
     // 1. Listen to real-time status change events
     const unlistenStatus = listenToStatusChanges((payload) => {
       setStatuses(prev => ({ ...prev, [payload.tunnelId]: payload.status }));
-      
-      // Refresh events when status changes
-      getEvents().then(evs => setEvents(evs));
+      refreshEvents();
     });
 
     // 2. Listen to status bar tray menu toggle events
@@ -201,6 +208,9 @@ function AppContent() {
     return () => {
       unlistenStatus.then(f => f());
       unlistenTray.then(f => f());
+      if (refreshEventsTimerRef.current !== null) {
+        window.clearTimeout(refreshEventsTimerRef.current);
+      }
     };
   }, []);
 
@@ -241,7 +251,7 @@ function AppContent() {
       const evs = await getEvents();
       setEvents(evs);
     } catch (e) {
-      alert("Failed to save tunnel: " + e);
+      showNotice("Failed to save tunnel: " + e, "error");
     }
   };
 
@@ -262,7 +272,7 @@ function AppContent() {
       const evs = await getEvents();
       setEvents(evs);
     } catch (e) {
-      alert("Failed to delete tunnel: " + e);
+      showNotice("Failed to delete tunnel: " + e, "error");
     }
   };
 
@@ -272,6 +282,9 @@ function AppContent() {
     setNewGroupName("");
     setNewGroupDesc("");
   };
+
+  useEscapeLayer(showGroupForm, handleCloseGroupForm);
+  useEscapeLayer(confirmRequest !== null, () => setConfirmRequest(null));
 
   const handleSaveGroup = async () => {
     if (!newGroupName.trim()) return;
@@ -313,7 +326,7 @@ function AppContent() {
       const evs = await getEvents();
       setEvents(evs);
     } catch (e) {
-      alert("Failed to save group: " + e);
+      showNotice("Failed to save group: " + e, "error");
     }
   };
 
@@ -325,7 +338,10 @@ function AppContent() {
   };
 
   const handleDeleteGroup = async (groupId: string) => {
-    if (!confirm(t("confirmDeleteGroup"))) return;
+    requestConfirm(t("confirmDeleteGroup"), () => deleteGroup(groupId));
+  };
+
+  const deleteGroup = async (groupId: string) => {
 
     const updatedGroups = config.groups.filter(g => g.id !== groupId);
     const updatedTunnels = config.tunnels.map(t => {
@@ -351,7 +367,7 @@ function AppContent() {
       const evs = await getEvents();
       setEvents(evs);
     } catch (e) {
-      alert("Failed to delete group: " + e);
+      showNotice("Failed to delete group: " + e, "error");
     }
   };
 
@@ -372,7 +388,7 @@ function AppContent() {
       const evs = await getEvents();
       setEvents(evs);
     } catch (e) {
-      alert("Failed to move tunnel: " + e);
+      showNotice("Failed to move tunnel: " + e, "error");
     }
   };
 
@@ -408,7 +424,7 @@ function AppContent() {
         onDeleteGroup={handleDeleteGroup}
         onStartTunnel={handleStartTunnel}
         onStopTunnel={handleStopTunnel}
-        onDeleteTunnel={handleDeleteTunnel}
+        onConfirmDeleteTunnel={(id) => requestConfirm(t("btnDeleteConfirm"), () => handleDeleteTunnel(id))}
         onTestConnection={handleTestConnectionForTunnel}
         onMoveTunnelToGroup={handleMoveTunnelToGroup}
         onEditTunnel={(id) => {
@@ -545,7 +561,40 @@ function AppContent() {
           onThemeChange={setTheme}
           onClose={() => setShowSettingsModal(false)}
           onConfigChanged={loadData}
+          onConfirm={requestConfirm}
         />
+      )}
+
+      {notice && (
+        <div className={`fixed right-4 top-4 z-[70] max-w-sm rounded-lg border px-4 py-3 text-xs shadow-xl ${notice.type === "error" ? "border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950 dark:text-red-200" : "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950 dark:text-emerald-200"}`}>
+          {notice.message}
+        </div>
+      )}
+
+      {confirmRequest && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-xl border border-gray-200 bg-white p-5 shadow-2xl dark:border-neutral-800 dark:bg-neutral-900">
+            <p className="text-sm font-medium text-gray-900 dark:text-white">{confirmRequest.message}</p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmRequest(null)}
+                className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 transition hover:bg-gray-100 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700"
+              >
+                {t("btnCancel")}
+              </button>
+              <button
+                onClick={() => {
+                  const action = confirmRequest.onConfirm;
+                  setConfirmRequest(null);
+                  action();
+                }}
+                className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-red-700"
+              >
+                {t("btnDelete")}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>

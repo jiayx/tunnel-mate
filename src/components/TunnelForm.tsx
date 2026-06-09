@@ -3,6 +3,7 @@ import { X, Download, ChevronDown, Info, Server, Shuffle, GitBranch, RotateCcw, 
 import { Group, Tunnel, ForwardKind, SshHostConfig, importSshConfig, selectPrivateKeyFile } from "../lib/tauri";
 import { useLanguage } from "../lib/i18n";
 import { CompositionInput, CompositionTextarea } from "./CompositionInput";
+import { useEscapeLayer } from "../hooks/useEscapeLayer";
 
 interface TunnelFormProps {
   tunnel: Tunnel | null; // null means creating new tunnel
@@ -66,20 +67,8 @@ export default function TunnelForm({
       .catch(e => console.error("Failed to load ssh config:", e));
   }, []);
 
-  // Close form on Escape key
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        if (showSshConfigList) {
-          setShowSshConfigList(false);
-          return;
-        }
-        onCancel();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onCancel, showSshConfigList]);
+  useEscapeLayer(true, onCancel);
+  useEscapeLayer(showSshConfigList, () => setShowSshConfigList(false));
 
   // Initialize form if editing
   useEffect(() => {
@@ -198,7 +187,7 @@ export default function TunnelForm({
     if (key === "name") return "general";
     if (key === "sshHost" || key === "sshUser" || key === "sshPort") return "ssh";
     if (key === "listenPort" || key === "targetHost" || key === "targetPort") return "forward";
-    if (key === "jumpHost" || key === "jumpPort") return "jump";
+    if (key === "jumpHost" || key === "jumpPort" || key === "jumpUser") return "jump";
     if (key === "retryCount" || key === "retryInterval") return "behavior";
     return "general";
   };
@@ -241,6 +230,9 @@ export default function TunnelForm({
     if (jumpHostEnabled) {
       if (!jumpHost) {
         errs.jumpHost = t("errJumpHostRequired");
+      }
+      if (!jumpUser.trim()) {
+        errs.jumpUser = t("errUserRequired");
       }
       const jPort = Number(jumpPort);
       if (isNaN(jPort) || jPort < 1 || jPort > 65535 || !Number.isInteger(jPort)) {
@@ -779,6 +771,7 @@ export default function TunnelForm({
                         onValueChange={setJumpUser}
                         className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500"
                       />
+                      {errors.jumpUser && <p className="text-[10px] text-red-500 mt-1">{errors.jumpUser}</p>}
                     </div>
                     <div>
                       <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">{t("sshPassword")}</label>

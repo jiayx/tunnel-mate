@@ -3,6 +3,7 @@ import { X, CheckCircle2, AlertTriangle, XCircle, Loader2, ArrowRight } from "lu
 import { Tunnel, DiagnosticStep, testConnection } from "../lib/tauri";
 import { useLanguage } from "../lib/i18n";
 import { CompositionInput } from "./CompositionInput";
+import { useEscapeLayer } from "../hooks/useEscapeLayer";
 
 interface DiagnosticsModalProps {
   tunnel: Tunnel;
@@ -60,15 +61,7 @@ export default function DiagnosticsModal({
     }
   }, [tunnel, initialSteps]);
 
-  React.useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  useEscapeLayer(true, onClose);
 
   const hasErrors = steps.some(s => s.status === "error");
   const isPassphraseOk = passphraseRequired && passphrase.trim().length > 0;

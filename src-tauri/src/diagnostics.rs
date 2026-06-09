@@ -1,5 +1,5 @@
 use crate::config::{Endpoint, ForwardSpec, Tunnel};
-use crate::ssh::engine::SshSession;
+use crate::ssh::engine::{ConnectOptions, KnownHostsPolicy, SshSession};
 use serde::{Deserialize, Serialize};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::time::Duration;
@@ -137,16 +137,16 @@ pub async fn run_diagnostics(tunnel: &Tunnel, passphrase: Option<&str>) -> Vec<D
         }
     }
 
-    match SshSession::connect(
-        &target.host,
-        target.port,
-        &target.user,
-        target.identity_file.as_deref(),
-        target.password.as_deref(),
+    match SshSession::connect(ConnectOptions {
+        host: &target.host,
+        port: target.port,
+        user: &target.user,
+        identity_file: target.identity_file.as_deref(),
+        password: target.password.as_deref(),
         passphrase,
-        "trustOnce",
-        None,
-    )
+        known_hosts_policy: KnownHostsPolicy::TrustOnce,
+        jump_host_config: None,
+    })
     .await
     {
         Ok(mut session) => {
@@ -217,23 +217,11 @@ fn endpoint_to_diagnostic(endpoint: &Endpoint, prefix: &'static str) -> Diagnost
 fn resolve_diagnostic_target(tunnel: &Tunnel) -> DiagnosticTarget {
     if tunnel.jump_host_enabled {
         DiagnosticTarget {
-            host: tunnel
-                .jump_host
-                .clone()
-                .unwrap_or_else(|| tunnel.ssh_host.clone()),
-            port: tunnel.jump_port.unwrap_or(22),
-            user: tunnel
-                .jump_user
-                .clone()
-                .unwrap_or_else(|| tunnel.ssh_user.clone()),
-            identity_file: tunnel
-                .jump_identity_file
-                .clone()
-                .or_else(|| tunnel.ssh_identity_file.clone()),
-            password: tunnel
-                .jump_password
-                .clone()
-                .or_else(|| tunnel.ssh_password.clone()),
+            host: tunnel.jump_host.clone().unwrap_or_default(),
+            port: tunnel.jump_port.unwrap_or_default(),
+            user: tunnel.jump_user.clone().unwrap_or_default(),
+            identity_file: tunnel.jump_identity_file.clone(),
+            password: tunnel.jump_password.clone(),
             prefix: "[Jump Host] ",
         }
     } else {

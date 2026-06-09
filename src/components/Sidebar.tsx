@@ -24,7 +24,7 @@ interface SidebarProps {
   onDeleteGroup: (groupId: string) => void;
   onStartTunnel: (id: string) => void;
   onStopTunnel: (id: string) => void;
-  onDeleteTunnel: (id: string) => void;
+  onConfirmDeleteTunnel: (id: string) => void;
   onTestConnection: (id: string) => void;
   onEditTunnel: (id: string) => void;
   onMoveTunnelToGroup: (tunnelId: string, groupId: string) => void;
@@ -47,7 +47,7 @@ export default function Sidebar({
   onDeleteGroup,
   onStartTunnel,
   onStopTunnel,
-  onDeleteTunnel,
+  onConfirmDeleteTunnel,
   onTestConnection,
   onEditTunnel,
   onMoveTunnelToGroup,
@@ -642,9 +642,7 @@ export default function Sidebar({
                 {/* Delete Tunnel */}
                 <button
                   onClick={() => {
-                    if (confirm(t("btnDeleteConfirm"))) {
-                      onDeleteTunnel(currentTunnel.id);
-                    }
+                    onConfirmDeleteTunnel(currentTunnel.id);
                     setContextMenu(null);
                   }}
                   className="w-full text-left px-3 py-1.5 hover:bg-red-50 hover:text-red-655 dark:hover:bg-red-950/20 dark:hover:text-red-400 text-red-600 dark:text-red-400 flex items-center gap-2 cursor-pointer transition font-medium"

@@ -66,6 +66,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
+      - name: Typecheck frontend
+        run: pnpm typecheck
+
+      - name: Test Rust backend
+        run: pnpm test:rust
+
+      - name: Lint Rust backend
+        run: pnpm clippy
+
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
         env:

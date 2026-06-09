@@ -1,7 +1,7 @@
 use crate::config::{ConfigStore, Tunnel, TunnelStatus};
 use crate::event_logger::{EventLogger, EventType};
-use crate::ssh::engine::SshSession;
-use crate::ssh::tunnel::TunnelWorker;
+use crate::ssh::engine::{ConnectOptions, KnownHostsPolicy, SshSession};
+use crate::ssh::tunnel::{LogSink, TunnelWorker};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -19,7 +19,7 @@ pub struct StatusPayload {
 pub struct ActiveTunnel {
     pub tunnel: Tunnel,
     pub worker: TunnelWorker,
-    pub log_channel: Channel<String>,
+    pub log_channel: LogSink,
     ssh_session: SshSession,
 }
 
@@ -50,7 +50,34 @@ impl TunnelManager {
         app: AppHandle,
         tunnel: Tunnel,
         passphrase: Option<String>,
-        log_channel: Channel<String>, // Passed from frontend!
+        log_channel: Channel<String>,
+    ) -> Result<(), String> {
+        Self::start_tunnel_attempt(
+            manager_state,
+            app,
+            tunnel,
+            passphrase,
+            LogSink::Channel(log_channel),
+            0,
+        )
+        .await
+    }
+
+    pub async fn start_tunnel_silent(
+        manager_state: Arc<Mutex<Self>>,
+        app: AppHandle,
+        tunnel: Tunnel,
+    ) -> Result<(), String> {
+        Self::start_tunnel_attempt(manager_state, app, tunnel, None, LogSink::Silent, 0).await
+    }
+
+    async fn start_tunnel_attempt(
+        manager_state: Arc<Mutex<Self>>,
+        app: AppHandle,
+        tunnel: Tunnel,
+        passphrase: Option<String>,
+        log_channel: LogSink,
+        reconnect_attempt: u32,
     ) -> Result<(), String> {
         let tunnel_id = tunnel.id.clone();
         let logger = EventLogger::new();
@@ -87,25 +114,23 @@ impl TunnelManager {
         // Resolve Jump Host configuration if enabled
         let jump_config = if tunnel.jump_host_enabled {
             let config = ConfigStore::new().load_config()?;
-            let selected = config
-                .tunnels
-                .iter()
-                .find(|t| t.name == tunnel.jump_host.clone().unwrap_or_default())
-                .cloned();
-
-            selected.or_else(|| {
-                let host = tunnel.jump_host.clone()?;
+            let jump_host = tunnel.jump_host.clone().unwrap_or_default();
+            if let Some(selected) = config.tunnels.iter().find(|t| t.name == jump_host).cloned() {
+                Some(selected)
+            } else {
                 Some(Tunnel {
                     id: format!("{}_manual_jump", tunnel.id),
-                    name: host.clone(),
+                    name: jump_host.clone(),
                     description: None,
                     group_id: None,
-                    ssh_host: host,
-                    ssh_port: tunnel.jump_port.unwrap_or(22),
+                    ssh_host: jump_host,
+                    ssh_port: tunnel
+                        .jump_port
+                        .ok_or_else(|| format!("Tunnel '{}' jump port is required", tunnel.name))?,
                     ssh_user: tunnel
                         .jump_user
                         .clone()
-                        .unwrap_or_else(|| tunnel.ssh_user.clone()),
+                        .ok_or_else(|| format!("Tunnel '{}' jump user is required", tunnel.name))?,
                     ssh_identity_file: tunnel.jump_identity_file.clone(),
                     ssh_password: tunnel.jump_password.clone(),
                     jump_host_enabled: false,
@@ -120,7 +145,7 @@ impl TunnelManager {
                     retry_count: 0,
                     retry_interval: tunnel.retry_interval,
                 })
-            })
+            }
         } else {
             None
         };
@@ -133,24 +158,24 @@ impl TunnelManager {
         // Run connection in separate task to prevent blocking GUI
         tokio::spawn(async move {
             let log_ch = log_channel.clone();
-            let _ = log_ch.send("[INFO] Establishing SSH connection...".to_string());
+            log_ch.send("[INFO] Establishing SSH connection...".to_string());
 
-            let conn_res = SshSession::connect(
-                &t_clone.ssh_host,
-                t_clone.ssh_port,
-                &t_clone.ssh_user,
-                t_clone.ssh_identity_file.as_deref(),
-                t_clone.ssh_password.as_deref(),
-                passphrase_conn.as_deref(),
-                "trustPermanently", // Default verify policy: auto-add on first connect
-                jump_config.as_ref(),
-            )
+            let conn_res = SshSession::connect(ConnectOptions {
+                host: &t_clone.ssh_host,
+                port: t_clone.ssh_port,
+                user: &t_clone.ssh_user,
+                identity_file: t_clone.ssh_identity_file.as_deref(),
+                password: t_clone.ssh_password.as_deref(),
+                passphrase: passphrase_conn.as_deref(),
+                known_hosts_policy: KnownHostsPolicy::TrustPermanently,
+                jump_host_config: jump_config.as_ref(),
+            })
             .await;
 
             let ssh_session = match conn_res {
                 Ok(sess) => sess,
                 Err(err_msg) => {
-                    let _ = log_ch.send(format!("[ERROR] Connection failed: {}", err_msg));
+                    log_ch.send(format!("[ERROR] Connection failed: {}", err_msg));
                     let _ = logger.log(
                         Some(tunnel_id.clone()),
                         Some(tunnel.name.clone()),
@@ -174,7 +199,12 @@ impl TunnelManager {
                     } else if tunnel.auto_reconnect {
                         // Spawn reconnect task
                         Self::spawn_reconnect_flow(
-                            m_state, app_handle, tunnel, passphrase, 1, log_ch,
+                            m_state,
+                            app_handle,
+                            tunnel,
+                            passphrase,
+                            reconnect_attempt + 1,
+                            log_ch,
                         );
                     } else {
                         {
@@ -190,8 +220,7 @@ impl TunnelManager {
             };
 
             // Start forwarder worker
-            let _ =
-                log_ch.send("[INFO] SSH Session authenticated. Spawning listeners...".to_string());
+            log_ch.send("[INFO] SSH Session authenticated. Spawning listeners...".to_string());
             let ssh_handle = ssh_session.handle();
             let mut ssh_session = ssh_session;
             let forwarded_rx = ssh_session.take_forwarded_receiver();
@@ -203,7 +232,7 @@ impl TunnelManager {
                     Ok(w) => w,
                     Err(e) => {
                         let err_msg = format!("Failed to start forwarding listeners: {}", e);
-                        let _ = log_ch.send(format!("[ERROR] {}", err_msg));
+                        log_ch.send(format!("[ERROR] {}", err_msg));
                         let _ = logger.log(
                             Some(tunnel_id.clone()),
                             Some(tunnel.name.clone()),
@@ -263,7 +292,7 @@ impl TunnelManager {
 
         if let Some(mut active) = self.active_tunnels.remove(tunnel_id) {
             let name = active.tunnel.name.clone();
-            let _ = active
+            active
                 .log_channel
                 .send("[INFO] Stopping tunnel listeners...".to_string());
 
@@ -292,7 +321,7 @@ impl TunnelManager {
         tunnel: Tunnel,
         passphrase: Option<String>,
         attempt: u32,
-        log_channel: Channel<String>,
+        log_channel: LogSink,
     ) {
         let tunnel_id = tunnel.id.clone();
         let max_retries = tunnel.retry_count;
@@ -359,12 +388,13 @@ impl TunnelManager {
             );
 
             // Try to connect again
-            let start_res = Self::start_tunnel(
+            let start_res = Self::start_tunnel_attempt(
                 manager_state_task.clone(),
                 app_task.clone(),
                 tunnel_task.clone(),
                 passphrase_task.clone(),
                 log_channel_task.clone(),
+                attempt,
             )
             .await;
 

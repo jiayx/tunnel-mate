@@ -1,9 +1,10 @@
+use keyring::{Entry, Error as KeyringError};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 
-pub const CONFIG_VERSION: u32 = 2;
+pub const CONFIG_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -68,6 +69,7 @@ pub struct Tunnel {
     pub ssh_port: u16,
     pub ssh_user: String,
     pub ssh_identity_file: Option<String>,
+    #[serde(skip_serializing)]
     pub ssh_password: Option<String>,
 
     // Jump Host
@@ -76,6 +78,7 @@ pub struct Tunnel {
     pub jump_port: Option<u16>,
     pub jump_user: Option<String>,
     pub jump_identity_file: Option<String>,
+    #[serde(skip_serializing)]
     pub jump_password: Option<String>,
 
     // Forwarding
@@ -118,7 +121,7 @@ pub struct AppConfig {
     pub version: u32,
     pub groups: Vec<Group>,
     pub tunnels: Vec<Tunnel>,
-    pub settings: Option<GlobalSettings>,
+    pub settings: GlobalSettings,
 }
 
 impl Default for AppConfig {
@@ -127,7 +130,7 @@ impl Default for AppConfig {
             version: CONFIG_VERSION,
             groups: Vec::new(),
             tunnels: Vec::new(),
-            settings: None,
+            settings: GlobalSettings::default(),
         }
     }
 }
@@ -166,6 +169,30 @@ pub fn validate_tunnel(tunnel: &Tunnel) -> Result<(), String> {
         validate_endpoint(target, "target endpoint")?;
     }
 
+    if tunnel.jump_host_enabled {
+        if tunnel
+            .jump_host
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .is_empty()
+        {
+            return Err(format!("Tunnel '{}' jump host is required", tunnel.name));
+        }
+        if tunnel.jump_port.unwrap_or_default() == 0 {
+            return Err(format!("Tunnel '{}' jump port is invalid", tunnel.name));
+        }
+        if tunnel
+            .jump_user
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .is_empty()
+        {
+            return Err(format!("Tunnel '{}' jump user is required", tunnel.name));
+        }
+    }
+
     Ok(())
 }
 
@@ -182,6 +209,8 @@ pub fn validate_endpoint(endpoint: &Endpoint, label: &str) -> Result<(), String>
 pub struct ConfigStore {
     base_path: PathBuf,
 }
+
+const KEYRING_SERVICE: &str = "com.jiayx.tunnel-mate";
 
 impl ConfigStore {
     pub fn new() -> Self {
@@ -206,16 +235,19 @@ impl ConfigStore {
 
         let content = fs::read_to_string(&config_path)
             .map_err(|e| format!("Failed to read config file: {}", e))?;
+        reject_persisted_secrets(&content)?;
 
-        let config: AppConfig = serde_json::from_str(&content)
+        let mut config: AppConfig = serde_json::from_str(&content)
             .map_err(|e| format!("Failed to parse config file: {}", e))?;
         validate_config(&config)?;
+        self.hydrate_secrets(&mut config);
 
         Ok(config)
     }
 
     pub fn save_config(&self, config: &AppConfig) -> Result<(), String> {
         validate_config(config)?;
+        self.persist_secrets(config)?;
 
         let config_path = self.get_config_path();
 
@@ -243,6 +275,85 @@ impl ConfigStore {
             .map_err(|e| format!("Failed to commit config file: {}", e))?;
 
         Ok(())
+    }
+
+    fn hydrate_secrets(&self, config: &mut AppConfig) {
+        for tunnel in &mut config.tunnels {
+            tunnel.ssh_password = read_secret(&secret_account(&tunnel.id, "ssh_password"));
+            tunnel.jump_password = read_secret(&secret_account(&tunnel.id, "jump_password"));
+        }
+    }
+
+    fn persist_secrets(&self, config: &AppConfig) -> Result<(), String> {
+        if let Ok(existing) = self.load_config_from_disk() {
+            for tunnel in existing.tunnels {
+                if !config.tunnels.iter().any(|current| current.id == tunnel.id) {
+                    write_secret(&secret_account(&tunnel.id, "ssh_password"), None)?;
+                    write_secret(&secret_account(&tunnel.id, "jump_password"), None)?;
+                }
+            }
+        }
+
+        for tunnel in &config.tunnels {
+            write_secret(
+                &secret_account(&tunnel.id, "ssh_password"),
+                tunnel.ssh_password.as_deref(),
+            )?;
+            write_secret(
+                &secret_account(&tunnel.id, "jump_password"),
+                tunnel.jump_password.as_deref(),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn load_config_from_disk(&self) -> Result<AppConfig, String> {
+        let config_path = self.get_config_path();
+        let content = fs::read_to_string(&config_path)
+            .map_err(|e| format!("Failed to read config file: {}", e))?;
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config file: {}", e))
+    }
+}
+
+fn secret_account(tunnel_id: &str, name: &str) -> String {
+    format!("{}:{}", tunnel_id, name)
+}
+
+fn reject_persisted_secrets(content: &str) -> Result<(), String> {
+    let value: serde_json::Value =
+        serde_json::from_str(content).map_err(|e| format!("Failed to parse config file: {}", e))?;
+    let Some(tunnels) = value.get("tunnels").and_then(|value| value.as_array()) else {
+        return Ok(());
+    };
+
+    if tunnels
+        .iter()
+        .any(|tunnel| tunnel.get("sshPassword").is_some() || tunnel.get("jumpPassword").is_some())
+    {
+        return Err("Config file must not contain persisted SSH passwords".to_string());
+    }
+
+    Ok(())
+}
+
+fn read_secret(account: &str) -> Option<String> {
+    Entry::new(KEYRING_SERVICE, account)
+        .ok()
+        .and_then(|entry| entry.get_password().ok())
+        .filter(|value| !value.is_empty())
+}
+
+fn write_secret(account: &str, value: Option<&str>) -> Result<(), String> {
+    let entry = Entry::new(KEYRING_SERVICE, account)
+        .map_err(|e| format!("Failed to open credential store: {}", e))?;
+    match value.filter(|password| !password.is_empty()) {
+        Some(password) => entry
+            .set_password(password)
+            .map_err(|e| format!("Failed to save credential: {}", e)),
+        None => match entry.delete_credential() {
+            Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
+            Err(e) => Err(format!("Failed to delete credential: {}", e)),
+        },
     }
 }
 
@@ -288,15 +399,18 @@ mod tests {
     }
 
     #[test]
-    fn serializes_forward_spec_without_legacy_fields() {
+    fn serializes_forward_spec_schema() {
+        let mut tunnel = test_tunnel(ForwardSpec::Local {
+            listen: test_endpoint("127.0.0.1", 13306),
+            target: test_endpoint("db.internal", 3306),
+        });
+        tunnel.ssh_password = Some("secret".to_string());
+        tunnel.jump_password = Some("jump-secret".to_string());
         let config = AppConfig {
             version: CONFIG_VERSION,
             groups: Vec::new(),
-            tunnels: vec![test_tunnel(ForwardSpec::Local {
-                listen: test_endpoint("127.0.0.1", 13306),
-                target: test_endpoint("db.internal", 3306),
-            })],
-            settings: None,
+            tunnels: vec![tunnel],
+            settings: GlobalSettings::default(),
         };
 
         let json = serde_json::to_string(&config).unwrap();
@@ -305,11 +419,10 @@ mod tests {
         assert!(json.contains("\"kind\":\"local\""));
         assert!(json.contains("\"listen\""));
         assert!(json.contains("\"target\""));
-        assert!(!json.contains("tunnelType"));
-        assert!(!json.contains("localHost"));
-        assert!(!json.contains("localPort"));
-        assert!(!json.contains("remoteHost"));
-        assert!(!json.contains("remotePort"));
+        assert!(json.contains("settings"));
+        assert!(!json.contains("sshPassword"));
+        assert!(!json.contains("jumpPassword"));
+        assert!(!json.contains("secret"));
     }
 
     #[test]
@@ -320,7 +433,7 @@ mod tests {
             tunnels: vec![test_tunnel(ForwardSpec::Socks5 {
                 listen: test_endpoint("127.0.0.1", 1080),
             })],
-            settings: None,
+            settings: GlobalSettings::default(),
         };
 
         assert!(validate_config(&config).is_ok());
@@ -329,10 +442,10 @@ mod tests {
     #[test]
     fn rejects_unsupported_config_version() {
         let config = AppConfig {
-            version: 1,
+            version: CONFIG_VERSION + 1,
             groups: Vec::new(),
             tunnels: Vec::new(),
-            settings: None,
+            settings: GlobalSettings::default(),
         };
 
         assert!(validate_config(&config)

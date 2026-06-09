@@ -1,10 +1,29 @@
 use crate::config::{ForwardSpec, Tunnel};
 use crate::ssh::engine::{ForwardedTcp, SharedSshHandle};
 use crate::ssh::socks5::negotiate_socks5;
+use std::future::Future;
 use std::net::TcpListener as StdTcpListener;
+use tauri::ipc::Channel;
 use tokio::io::copy_bidirectional;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, watch};
+use tokio::time::{timeout, Duration};
+
+const FORWARD_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Clone)]
+pub enum LogSink {
+    Channel(Channel<String>),
+    Silent,
+}
+
+impl LogSink {
+    pub fn send(&self, message: String) {
+        if let LogSink::Channel(channel) = self {
+            let _ = channel.send(message);
+        }
+    }
+}
 
 pub struct TunnelWorker {
     shutdown_tx: watch::Sender<bool>,
@@ -24,7 +43,7 @@ impl TunnelWorker {
         tunnel: Tunnel,
         handle: SharedSshHandle,
         forwarded_rx: Option<mpsc::UnboundedReceiver<ForwardedTcp>>,
-        log_sender: tauri::ipc::Channel<String>,
+        log_sender: LogSink,
     ) -> Result<Self, String> {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
@@ -139,7 +158,7 @@ async fn run_local_forward(
     target_host: String,
     target_port: u16,
     mut shutdown_rx: watch::Receiver<bool>,
-    log: tauri::ipc::Channel<String>,
+    log: LogSink,
 ) {
     send_log(
         &log,
@@ -173,15 +192,36 @@ async fn pipe_local_connection(
     handle: SharedSshHandle,
     target_host: String,
     target_port: u16,
-    log: tauri::ipc::Channel<String>,
+    log: LogSink,
 ) {
-    match handle
-        .lock()
-        .await
-        .channel_open_direct_tcpip(target_host.clone(), target_port as u32, "127.0.0.1", 0)
-        .await
+    send_log(
+        &log,
+        format!(
+            "[INFO] Opening SSH channel to {}:{}",
+            target_host, target_port
+        ),
+    );
+    let open_channel = async {
+        handle
+            .lock()
+            .await
+            .channel_open_direct_tcpip(target_host.clone(), target_port as u32, "127.0.0.1", 0)
+            .await
+    };
+
+    match timeout_result(
+        FORWARD_CONNECT_TIMEOUT,
+        open_channel,
+        format!(
+            "SSH channel connection timed out after {}s: {}:{}",
+            FORWARD_CONNECT_TIMEOUT.as_secs(),
+            target_host,
+            target_port
+        ),
+    )
+    .await
     {
-        Ok(channel) => {
+        Ok(Ok(channel)) => {
             send_log(
                 &log,
                 format!(
@@ -194,10 +234,11 @@ async fn pipe_local_connection(
                 send_log(&log, format!("[ERROR] Forwarding stream failed: {}", e));
             }
         }
-        Err(e) => send_log(
+        Ok(Err(e)) => send_log(
             &log,
             format!("[ERROR] SSH channel connection failed: {}", e),
         ),
+        Err(message) => send_log(&log, format!("[ERROR] {}", message)),
     }
 }
 
@@ -205,7 +246,7 @@ async fn run_socks5_forward(
     listener: TcpListener,
     handle: SharedSshHandle,
     mut shutdown_rx: watch::Receiver<bool>,
-    log: tauri::ipc::Channel<String>,
+    log: LogSink,
 ) {
     send_log(&log, "[INFO] Starting SOCKS5 Dynamic Proxy...".to_string());
 
@@ -243,7 +284,7 @@ async fn run_remote_forward(
     target_port: u16,
     remote_listen_port: u32,
     mut shutdown_rx: watch::Receiver<bool>,
-    log: tauri::ipc::Channel<String>,
+    log: LogSink,
 ) {
     send_log(
         &log,
@@ -281,13 +322,19 @@ async fn run_remote_forward(
     }
 }
 
-async fn pipe_remote_connection(
-    forwarded: ForwardedTcp,
-    target: String,
-    log: tauri::ipc::Channel<String>,
-) {
-    match TcpStream::connect(&target).await {
-        Ok(mut target_stream) => {
+async fn pipe_remote_connection(forwarded: ForwardedTcp, target: String, log: LogSink) {
+    match timeout_result(
+        FORWARD_CONNECT_TIMEOUT,
+        TcpStream::connect(&target),
+        format!(
+            "Target connection timed out after {}s: {}",
+            FORWARD_CONNECT_TIMEOUT.as_secs(),
+            target
+        ),
+    )
+    .await
+    {
+        Ok(Ok(mut target_stream)) => {
             send_log(&log, format!("[INFO] Connected to target {}", target));
             let mut ssh_stream = forwarded.channel.into_stream();
             if let Err(e) = copy_bidirectional(&mut ssh_stream, &mut target_stream).await {
@@ -297,15 +344,27 @@ async fn pipe_remote_connection(
                 );
             }
         }
-        Err(e) => send_log(
+        Ok(Err(e)) => send_log(
             &log,
             format!("[ERROR] Failed to connect to target {}: {}", target, e),
         ),
+        Err(message) => send_log(&log, format!("[ERROR] {}", message)),
     }
 }
 
-fn send_log(log: &tauri::ipc::Channel<String>, message: String) {
-    let _ = log.send(message);
+fn send_log(log: &LogSink, message: String) {
+    log.send(message);
+}
+
+async fn timeout_result<T, E, F>(
+    duration: Duration,
+    future: F,
+    timeout_message: String,
+) -> Result<Result<T, E>, String>
+where
+    F: Future<Output = Result<T, E>>,
+{
+    timeout(duration, future).await.map_err(|_| timeout_message)
 }
 
 #[cfg(test)]
@@ -338,5 +397,18 @@ mod tests {
         };
 
         assert_send(worker.stop()).await;
+    }
+
+    #[tokio::test]
+    async fn timeout_result_returns_error_for_pending_future() {
+        let err = timeout_result(
+            std::time::Duration::from_millis(1),
+            std::future::pending::<Result<(), &'static str>>(),
+            "forward setup timed out".to_string(),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(err, "forward setup timed out");
     }
 }

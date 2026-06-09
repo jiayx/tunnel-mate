@@ -13,15 +13,17 @@ pub struct SshHostConfig {
     pub identity_file: Option<String>,
 }
 
-pub fn parse_ssh_config() -> Vec<SshHostConfig> {
+pub fn parse_ssh_config(config_path: Option<&str>) -> Vec<SshHostConfig> {
     let mut hosts = Vec::new();
     let mut processed_paths = HashSet::new();
 
-    if let Some(home) = dirs::home_dir() {
-        let default_config_path = home.join(".ssh").join("config");
-        if default_config_path.exists() {
-            let _ = parse_config_file(&default_config_path, &mut hosts, &mut processed_paths);
-        }
+    let config_path = config_path
+        .filter(|path| !path.trim().is_empty())
+        .map(|path| PathBuf::from(expand_home_dir(path.trim())))
+        .or_else(default_config_path);
+
+    if let Some(config_path) = config_path.filter(|path| path.exists()) {
+        let _ = parse_config_file(&config_path, &mut hosts, &mut processed_paths);
     }
 
     // Filter out wildcards and empty host configs
@@ -29,6 +31,10 @@ pub fn parse_ssh_config() -> Vec<SshHostConfig> {
         .into_iter()
         .filter(|h| !h.host.is_empty() && h.host != "*")
         .collect()
+}
+
+fn default_config_path() -> Option<PathBuf> {
+    dirs::home_dir().map(|home| home.join(".ssh").join("config"))
 }
 
 fn parse_config_file(
@@ -125,9 +131,9 @@ fn parse_config_file(
 }
 
 fn expand_home_dir(path_str: &str) -> String {
-    if path_str.starts_with("~/") {
+    if let Some(stripped) = path_str.strip_prefix("~/") {
         if let Some(home) = dirs::home_dir() {
-            return home.join(&path_str[2..]).to_string_lossy().into_owned();
+            return home.join(stripped).to_string_lossy().into_owned();
         }
     }
     path_str.to_string()
@@ -217,5 +223,27 @@ mod tests {
         } else {
             assert_eq!(expanded, path);
         }
+    }
+
+    #[test]
+    fn parse_ssh_config_uses_custom_path() {
+        let path = std::env::temp_dir().join(format!(
+            "tunnel-mate-ssh-config-{}.conf",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            "Host custom-test\n  HostName example.test\n  User deploy\n  Port 2222\n",
+        )
+        .unwrap();
+
+        let hosts = parse_ssh_config(path.to_str());
+        let _ = fs::remove_file(&path);
+
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].host, "custom-test");
+        assert_eq!(hosts[0].host_name.as_deref(), Some("example.test"));
+        assert_eq!(hosts[0].user.as_deref(), Some("deploy"));
+        assert_eq!(hosts[0].port, Some(2222));
     }
 }

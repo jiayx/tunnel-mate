@@ -68,7 +68,7 @@ export interface AppConfig {
   version: number;
   groups: Group[];
   tunnels: Tunnel[];
-  settings?: GlobalSettings;
+  settings: GlobalSettings;
 }
 
 export function getListenEndpoint(tunnel: Tunnel): Endpoint {

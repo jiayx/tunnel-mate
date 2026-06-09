@@ -5,7 +5,9 @@ mod manager;
 mod ssh;
 mod ssh_config;
 
-use crate::config::{validate_config, AppConfig, ConfigStore, Tunnel, TunnelStatus};
+use crate::config::{
+    validate_config, AppConfig, ConfigStore, GlobalSettings, Tunnel, TunnelStatus,
+};
 use crate::diagnostics::{run_diagnostics, DiagnosticStep};
 use crate::event_logger::{EventLogger, EventType, LogEvent};
 use crate::manager::TunnelManager;
@@ -14,10 +16,12 @@ use std::sync::Arc;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_dialog::DialogExt;
 use tokio::sync::Mutex;
 
 struct TunnelState(Arc<Mutex<TunnelManager>>);
+struct SettingsState(Arc<Mutex<GlobalSettings>>);
 
 #[tauri::command]
 fn get_config() -> Result<AppConfig, String> {
@@ -26,10 +30,16 @@ fn get_config() -> Result<AppConfig, String> {
 }
 
 #[tauri::command]
-fn save_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
+async fn save_config(
+    app: AppHandle,
+    settings_state: State<'_, SettingsState>,
+    config: AppConfig,
+) -> Result<(), String> {
     validate_config(&config)?;
     let store = ConfigStore::new();
     store.save_config(&config)?;
+    sync_autostart(&app, config.settings.launch_on_startup)?;
+    *settings_state.0.lock().await = config.settings.clone();
     update_tray_menu(&app);
     Ok(())
 }
@@ -48,7 +58,12 @@ fn clear_events() -> Result<(), String> {
 
 #[tauri::command]
 fn import_ssh_config() -> Result<Vec<SshHostConfig>, String> {
-    Ok(parse_ssh_config())
+    let store = ConfigStore::new();
+    let ssh_config_path = store
+        .load_config()
+        .ok()
+        .and_then(|config| config.settings.ssh_config_path);
+    Ok(parse_ssh_config(ssh_config_path.as_deref()))
 }
 
 #[tauri::command]
@@ -250,12 +265,20 @@ pub fn update_tray_menu(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let manager = Arc::new(Mutex::new(TunnelManager::new()));
+    let manager_state = manager.clone();
+    let initial_settings = ConfigStore::new()
+        .load_config()
+        .map(|config| config.settings)
+        .unwrap_or_default();
+    let settings_state = Arc::new(Mutex::new(initial_settings));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_autostart::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(TunnelState(manager))
+        .manage(SettingsState(settings_state))
         .invoke_handler(tauri::generate_handler![
             get_config,
             save_config,
@@ -270,7 +293,7 @@ pub fn run() {
             export_config,
             import_config
         ])
-        .setup(|app| {
+        .setup(move |app| {
             let mut tray_builder = TrayIconBuilder::with_id("main-tray");
             let icon_path = app.path().resolve(
                 "icons/trayTemplate.png",
@@ -318,27 +341,43 @@ pub fn run() {
             // Build initial tray menu
             update_tray_menu(app.handle());
 
-            if let Some(window) = app.get_webview_window("main") {
+            let app_handle = app.handle().clone();
+            let auto_start_manager = manager_state.clone();
+            tauri::async_runtime::spawn(async move {
                 let store = ConfigStore::new();
-                if let Ok(config) = store.load_config() {
-                    if let Some(settings) = config.settings {
-                        if settings.start_minimized {
-                            let _ = window.hide();
-                        }
-                    }
+                let config = match store.load_config() {
+                    Ok(config) => config,
+                    Err(_) => return,
+                };
+
+                for tunnel in config
+                    .tunnels
+                    .into_iter()
+                    .filter(|tunnel| tunnel.start_with_app)
+                {
+                    let _ = TunnelManager::start_tunnel_silent(
+                        auto_start_manager.clone(),
+                        app_handle.clone(),
+                        tunnel,
+                    )
+                    .await;
+                }
+            });
+
+            if let Some(window) = app.get_webview_window("main") {
+                let settings = app.state::<SettingsState>().0.blocking_lock().clone();
+                if settings.start_minimized {
+                    let _ = window.hide();
                 }
 
                 let window_ = window.clone();
+                let settings_state = app.state::<SettingsState>().0.clone();
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        let store = ConfigStore::new();
-                        if let Ok(config) = store.load_config() {
-                            if let Some(settings) = config.settings {
-                                if settings.close_to_tray {
-                                    api.prevent_close();
-                                    let _ = window_.hide();
-                                }
-                            }
+                        let settings = settings_state.blocking_lock().clone();
+                        if settings.close_to_tray {
+                            api.prevent_close();
+                            let _ = window_.hide();
                         }
                     }
                 });
@@ -348,4 +387,17 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn sync_autostart(app: &AppHandle, launch_on_startup: bool) -> Result<(), String> {
+    let autostart = app.autolaunch();
+    if launch_on_startup {
+        autostart
+            .enable()
+            .map_err(|e| format!("Failed to enable launch on startup: {}", e))
+    } else {
+        autostart
+            .disable()
+            .map_err(|e| format!("Failed to disable launch on startup: {}", e))
+    }
 }
