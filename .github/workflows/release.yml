@@ -134,6 +134,7 @@ jobs:
           releaseName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
           releaseDraft: false
           prerelease: false
+          releaseAssetNamePattern: "[name]_[version]_[platform]_[arch][setup][ext]"
           args: ${{ matrix.args }}
 
       - name: Upload Build Artifacts (for branch testing)
