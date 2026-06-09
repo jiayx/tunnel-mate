@@ -10,9 +10,6 @@ on:
     branches:
       - main
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
   build-tauri:
     permissions:
@@ -47,15 +44,15 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 9
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: lts/*
           cache: 'pnpm'
@@ -103,7 +100,7 @@ jobs:
 
       - name: Upload Build Artifacts (for branch testing)
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_path }}
@@ -111,7 +108,7 @@ jobs:
 
       - name: Upload Linux AppImage Artifact (for branch testing)
         if: ${{ !startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'ubuntu-22.04' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tunnel-mate-linux-x86_64-appimage
           path: src-tauri/target/release/bundle/appimage/*.AppImage
