@@ -66,6 +66,10 @@ export default function TunnelOverview({
     return `${hrs.toString().padStart(2, "0")}:${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
+  const jumpHostLabel = tunnel?.jumpHostId
+    ? tunnels.find(candidate => candidate.id === tunnel.jumpHostId)?.name || tunnel.jumpHostId.slice(0, 8)
+    : tunnel?.jumpHost;
+
 
   const getStatusBadgeStyle = (stat: TunnelStatus) => {
     switch (stat) {
@@ -383,7 +387,7 @@ export default function TunnelOverview({
                   </div>
                   <div className="h-0.5 bg-indigo-500/30 flex-1 mx-2 relative top-0.5" />
                   <div className="bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900/60 px-3 py-2 rounded-lg font-semibold text-indigo-600 dark:text-indigo-400">
-                    {t("bastion")} ({tunnel.jumpHost})
+                    {t("bastion")} ({jumpHostLabel})
                   </div>
                   <div className="h-0.5 bg-indigo-500/30 flex-1 mx-2 relative top-0.5" />
                   <div className="bg-neutral-100 dark:bg-neutral-800 border border-gray-200 dark:border-neutral-750 px-3 py-2 rounded-lg font-medium">

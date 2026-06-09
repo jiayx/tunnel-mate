@@ -42,6 +42,7 @@ export default function TunnelForm({
   const [sshPassword, setSshPassword] = useState("");
 
   const [jumpHostEnabled, setJumpHostEnabled] = useState(false);
+  const [jumpHostId, setJumpHostId] = useState("");
   const [jumpHost, setJumpHost] = useState("");
   const [jumpPort, setJumpPort] = useState<number | "">(22);
   const [jumpUser, setJumpUser] = useState("");
@@ -83,6 +84,7 @@ export default function TunnelForm({
       setSshIdentityFile(tunnel.sshIdentityFile || "");
       setSshPassword(tunnel.sshPassword || "");
       setJumpHostEnabled(tunnel.jumpHostEnabled);
+      setJumpHostId(tunnel.jumpHostId || "");
       setJumpHost(tunnel.jumpHost || "");
       setJumpPort(tunnel.jumpPort || 22);
       setJumpUser(tunnel.jumpUser || "");
@@ -141,7 +143,7 @@ export default function TunnelForm({
         delete next.targetPort;
         changed = true;
       }
-      if (next.jumpHost && (!jumpHostEnabled || jumpHost)) {
+      if (next.jumpHost && (!jumpHostEnabled || jumpHostId || jumpHost)) {
         delete next.jumpHost;
         changed = true;
       }
@@ -160,7 +162,7 @@ export default function TunnelForm({
 
       return changed ? next : prev;
     });
-  }, [name, sshHost, sshUser, sshPort, listenPort, targetHost, targetPort, jumpHost, jumpPort, jumpHostEnabled, autoReconnect, retryCount, retryInterval]);
+  }, [name, sshHost, sshUser, sshPort, listenPort, targetHost, targetPort, jumpHostId, jumpHost, jumpPort, jumpHostEnabled, autoReconnect, retryCount, retryInterval]);
 
   const handleAutoFill = (cfg: SshHostConfig) => {
     if (!name) setName(cfg.host);
@@ -228,14 +230,14 @@ export default function TunnelForm({
 
     // 4. Jump Host Tab
     if (jumpHostEnabled) {
-      if (!jumpHost) {
+      if (!jumpHostId && !jumpHost) {
         errs.jumpHost = t("errJumpHostRequired");
       }
-      if (!jumpUser.trim()) {
+      if (!jumpHostId && !jumpUser.trim()) {
         errs.jumpUser = t("errUserRequired");
       }
       const jPort = Number(jumpPort);
-      if (isNaN(jPort) || jPort < 1 || jPort > 65535 || !Number.isInteger(jPort)) {
+      if (!jumpHostId && (isNaN(jPort) || jPort < 1 || jPort > 65535 || !Number.isInteger(jPort))) {
         errs.jumpPort = t("errInvalidPort");
       }
     }
@@ -292,11 +294,12 @@ export default function TunnelForm({
       sshIdentityFile: sshIdentityFile.trim() || undefined,
       sshPassword: sshPassword || undefined,
       jumpHostEnabled,
-      jumpHost: jumpHostEnabled ? jumpHost.trim() : undefined,
-      jumpPort: jumpHostEnabled ? Number(jumpPort) : undefined,
-      jumpUser: jumpHostEnabled ? jumpUser.trim() : undefined,
-      jumpIdentityFile: jumpHostEnabled && jumpIdentityFile.trim() ? jumpIdentityFile.trim() : undefined,
-      jumpPassword: jumpHostEnabled && jumpPassword ? jumpPassword : undefined,
+      jumpHostId: jumpHostEnabled && jumpHostId ? jumpHostId : undefined,
+      jumpHost: jumpHostEnabled && !jumpHostId ? jumpHost.trim() : undefined,
+      jumpPort: jumpHostEnabled && !jumpHostId ? Number(jumpPort) : undefined,
+      jumpUser: jumpHostEnabled && !jumpHostId ? jumpUser.trim() : undefined,
+      jumpIdentityFile: jumpHostEnabled && !jumpHostId && jumpIdentityFile.trim() ? jumpIdentityFile.trim() : undefined,
+      jumpPassword: jumpHostEnabled && !jumpHostId && jumpPassword ? jumpPassword : undefined,
       forward,
       startWithApp,
       autoReconnect,
@@ -711,24 +714,25 @@ export default function TunnelForm({
                     <label className="text-[11px] font-semibold text-gray-500 dark:text-neutral-400 block mb-1">{t("selectBastion")}</label>
                     <div className="relative">
                       <select
-                        value={jumpHost}
+                        value={jumpHostId}
                         onChange={(e) => {
-                          const selected = tunnels.find(t => t.name === e.target.value);
+                          const selected = tunnels.find(t => t.id === e.target.value);
                           if (selected) {
-                            setJumpHost(selected.name);
-                            setJumpPort(selected.sshPort);
-                            setJumpUser(selected.sshUser);
-                            setJumpIdentityFile(selected.sshIdentityFile || "");
-                            setJumpPassword(selected.sshPassword || "");
+                            setJumpHostId(selected.id);
+                            setJumpHost("");
+                            setJumpPort(22);
+                            setJumpUser("");
+                            setJumpIdentityFile("");
+                            setJumpPassword("");
                           } else {
-                            setJumpHost(e.target.value);
+                            setJumpHostId("");
                           }
                         }}
                         className="w-full px-3 py-2 pr-8 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500 appearance-none text-gray-900 dark:text-white cursor-pointer"
                       >
                         <option value="">-- Manual Configuration --</option>
                         {tunnels.filter(t => t.id !== tunnel?.id).map(t => (
-                          <option key={t.id} value={t.name}>{t.name} ({t.sshHost})</option>
+                          <option key={t.id} value={t.id}>{t.name} ({t.sshHost})</option>
                         ))}
                       </select>
                       <div className="absolute inset-y-0 right-2.5 flex items-center pointer-events-none">
@@ -744,7 +748,11 @@ export default function TunnelForm({
                         type="text"
                         placeholder="bastion.example.com"
                         value={jumpHost}
-                        onValueChange={setJumpHost}
+                        onValueChange={(value) => {
+                          setJumpHostId("");
+                          setJumpHost(value);
+                        }}
+                        disabled={Boolean(jumpHostId)}
                         className="w-full px-3 py-2 text-xs bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-md focus:ring-1 focus:ring-indigo-500"
                       />
                       {errors.jumpHost && <p className="text-[10px] text-red-500 mt-1">{errors.jumpHost}</p>}

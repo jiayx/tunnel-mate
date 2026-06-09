@@ -4,7 +4,7 @@ import {
   getConfig, saveConfig, getEvents, startTunnel, stopTunnel, 
   getTunnelStatus, AppConfig, Tunnel, Group, TunnelStatus, LogEvent,
   listenToStatusChanges, DiagnosticStep, testConnection, listenToTrayToggle,
-  listenToActivityEvents
+  listenToActivityEvents, trustHostKey
 } from "./lib/tauri";
 import Sidebar from "./components/Sidebar";
 import TunnelOverview from "./components/TunnelOverview";
@@ -155,6 +155,21 @@ function AppContent() {
       await startTunnel(id, logChannel, passphrase);
     } catch (e) {
       setStatuses(prev => ({ ...prev, [id]: "failed" }));
+      const hostKeyPrompt = parseHostKeyPrompt(String(e));
+      if (hostKeyPrompt) {
+        requestConfirm(
+          `Trust SSH host key for ${hostKeyPrompt.host}:${hostKeyPrompt.port}?\n\nFingerprint: ${hostKeyPrompt.fingerprint}`,
+          async () => {
+            try {
+              await trustHostKey(hostKeyPrompt.host, hostKeyPrompt.port);
+              await handleStartTunnel(id, passphrase, true);
+            } catch (err) {
+              showNotice("Failed to trust host key: " + err, "error");
+            }
+          }
+        );
+        return;
+      }
       showNotice("Failed to start tunnel: " + e, "error");
     }
   };
@@ -586,4 +601,18 @@ function AppContent() {
 
     </div>
   );
+}
+
+function parseHostKeyPrompt(error: string): { host: string; port: number; fingerprint: string } | null {
+  const marker = "HOST_KEY_NOT_TRUSTED|";
+  const index = error.indexOf(marker);
+  if (index < 0) return null;
+
+  const [host, port, fingerprint] = error.slice(index + marker.length).split("|");
+  const parsedPort = Number(port);
+  if (!host || !Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65535 || !fingerprint) {
+    return null;
+  }
+
+  return { host, port: parsedPort, fingerprint };
 }

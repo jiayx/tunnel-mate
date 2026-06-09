@@ -77,29 +77,14 @@ impl EventLogger {
             let _ = fs::create_dir_all(parent);
         }
 
-        let mut events = self.get_events().unwrap_or_default();
-        events.push(event.clone());
-
-        // Limit event log size to last 1000 events to prevent bloating
-        if events.len() > 1000 {
-            events.remove(0);
-        }
-
-        let content = serde_json::to_string_pretty(&events)
+        let content = serde_json::to_string(&event)
             .map_err(|e| format!("Failed to serialize events: {}", e))?;
-
-        // Atomic write
-        let tmp_path = path.with_extension("tmp");
-        {
-            let mut file = fs::File::create(&tmp_path)
-                .map_err(|e| format!("Failed to create temp events file: {}", e))?;
-            file.write_all(content.as_bytes())
-                .map_err(|e| format!("Failed to write events data: {}", e))?;
-            file.sync_all()
-                .map_err(|e| format!("Failed to sync events file: {}", e))?;
-        }
-
-        fs::rename(&tmp_path, &path).map_err(|e| format!("Failed to commit events file: {}", e))?;
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(|e| format!("Failed to open events file: {}", e))?;
+        writeln!(file, "{}", content).map_err(|e| format!("Failed to write events data: {}", e))?;
 
         Ok(event)
     }
@@ -113,8 +98,17 @@ impl EventLogger {
         let content =
             fs::read_to_string(&path).map_err(|e| format!("Failed to read events file: {}", e))?;
 
-        let events: Vec<LogEvent> = serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse events file: {}", e))?;
+        let mut events = content
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                serde_json::from_str(line)
+                    .map_err(|e| format!("Failed to parse events file: {}", e))
+            })
+            .collect::<Result<Vec<LogEvent>, String>>()?;
+        if events.len() > 1000 {
+            events = events.split_off(events.len() - 1000);
+        }
 
         Ok(events)
     }

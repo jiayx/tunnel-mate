@@ -10,6 +10,7 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
 
@@ -32,6 +33,7 @@ pub struct TunnelClient {
     host: String,
     port: u16,
     known_hosts_policy: KnownHostsPolicy,
+    host_key_error: Arc<StdMutex<Option<String>>>,
 }
 
 impl TunnelClient {
@@ -40,12 +42,14 @@ impl TunnelClient {
         host: String,
         port: u16,
         known_hosts_policy: KnownHostsPolicy,
+        host_key_error: Arc<StdMutex<Option<String>>>,
     ) -> Self {
         Self {
             forwarded_tx,
             host,
             port,
             known_hosts_policy,
+            host_key_error,
         }
     }
 }
@@ -59,11 +63,26 @@ impl client::Handler for TunnelClient {
     ) -> Result<bool, Self::Error> {
         match self.known_hosts_policy {
             KnownHostsPolicy::TrustOnce => Ok(true),
-            KnownHostsPolicy::TrustPermanently => {
+            KnownHostsPolicy::TrustAndRemember => {
                 if !is_known_host_key(&self.host, self.port, server_public_key) {
                     let _ = append_known_host(&self.host, self.port, server_public_key);
                 }
                 Ok(true)
+            }
+            KnownHostsPolicy::RequireKnown => {
+                if is_known_host_key(&self.host, self.port, server_public_key) {
+                    Ok(true)
+                } else {
+                    if let Ok(mut err) = self.host_key_error.lock() {
+                        *err = Some(format!(
+                            "HOST_KEY_NOT_TRUSTED|{}|{}|{}",
+                            self.host,
+                            self.port,
+                            server_public_key.fingerprint(ssh_key::HashAlg::Sha256)
+                        ));
+                    }
+                    Ok(false)
+                }
             }
         }
     }
@@ -108,7 +127,8 @@ pub struct ConnectOptions<'a> {
 #[derive(Clone, Copy)]
 pub enum KnownHostsPolicy {
     TrustOnce,
-    TrustPermanently,
+    TrustAndRemember,
+    RequireKnown,
 }
 
 impl SshSession {
@@ -148,7 +168,14 @@ impl SshSession {
         });
 
         let (forwarded_tx, forwarded_rx) = mpsc::unbounded_channel();
-        let handler = TunnelClient::new(forwarded_tx, host.to_string(), port, known_hosts_policy);
+        let host_key_error = Arc::new(StdMutex::new(None));
+        let handler = TunnelClient::new(
+            forwarded_tx,
+            host.to_string(),
+            port,
+            known_hosts_policy,
+            host_key_error.clone(),
+        );
 
         let (mut handle, bastion) = if let Some(jump) = jump_host_config {
             let jump_session = Box::new(
@@ -170,7 +197,13 @@ impl SshSession {
             let stream = channel.into_stream();
             let handle = client::connect_stream(config, stream, handler)
                 .await
-                .map_err(|e| format!("SSH connection via Jump Host failed: {}", e))?;
+                .map_err(|e| {
+                    host_key_error
+                        .lock()
+                        .ok()
+                        .and_then(|err| err.clone())
+                        .unwrap_or_else(|| format!("SSH connection via Jump Host failed: {}", e))
+                })?;
             (handle, Some(jump_session))
         } else {
             let handle = tokio::time::timeout(
@@ -179,7 +212,13 @@ impl SshSession {
             )
             .await
             .map_err(|_| format!("SSH connection to {}:{} timed out", host, port))?
-            .map_err(|e| format!("SSH connection failed: {}", e))?;
+            .map_err(|e| {
+                host_key_error
+                    .lock()
+                    .ok()
+                    .and_then(|err| err.clone())
+                    .unwrap_or_else(|| format!("SSH connection failed: {}", e))
+            })?;
             (handle, None)
         };
 
@@ -190,6 +229,28 @@ impl SshSession {
             forwarded_rx: Some(forwarded_rx),
             _bastion: bastion,
         })
+    }
+
+    pub async fn trust_host_key(host: &str, port: u16) -> Result<(), String> {
+        let config = Arc::new(Config {
+            nodelay: true,
+            ..Default::default()
+        });
+        let (forwarded_tx, _) = mpsc::unbounded_channel();
+        let handler = TunnelClient::new(
+            forwarded_tx,
+            host.to_string(),
+            port,
+            KnownHostsPolicy::TrustAndRemember,
+            Arc::new(StdMutex::new(None)),
+        );
+        let handle = client::connect(config, (host, port), handler)
+            .await
+            .map_err(|e| format!("Failed to trust host key: {}", e))?;
+        let _ = handle
+            .disconnect(Disconnect::ByApplication, "Host key trusted", "en")
+            .await;
+        Ok(())
     }
 
     pub fn handle(&self) -> SharedSshHandle {

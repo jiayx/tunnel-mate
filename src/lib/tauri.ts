@@ -39,6 +39,7 @@ export interface Tunnel {
 
   // Jump Host
   jumpHostEnabled: boolean;
+  jumpHostId?: string;
   jumpHost?: string;
   jumpPort?: number;
   jumpUser?: string;
@@ -147,6 +148,10 @@ export async function selectPrivateKeyFile(): Promise<string | null> {
 
 export async function testConnection(tunnel: Tunnel, passphrase?: string): Promise<DiagnosticStep[]> {
   return invoke<DiagnosticStep[]>("test_connection", { tunnel, passphrase: passphrase || null });
+}
+
+export async function trustHostKey(host: string, port: number): Promise<void> {
+  return invoke<void>("trust_host_key", { host, port });
 }
 
 export async function startTunnel(tunnelId: string, logChannel: Channel<string>, passphrase?: string): Promise<void> {

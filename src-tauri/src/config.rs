@@ -74,6 +74,7 @@ pub struct Tunnel {
 
     // Jump Host
     pub jump_host_enabled: bool,
+    pub jump_host_id: Option<String>,
     pub jump_host: Option<String>,
     pub jump_port: Option<u16>,
     pub jump_user: Option<String>,
@@ -147,6 +148,17 @@ pub fn validate_config(config: &AppConfig) -> Result<(), String> {
         validate_tunnel(tunnel)?;
     }
 
+    for tunnel in &config.tunnels {
+        if let Some(jump_host_id) = tunnel.jump_host_id.as_deref() {
+            if jump_host_id == tunnel.id {
+                return Err(format!("Tunnel '{}' cannot use itself as a jump host", tunnel.name));
+            }
+            if !config.tunnels.iter().any(|candidate| candidate.id == jump_host_id) {
+                return Err(format!("Tunnel '{}' jump host reference is invalid", tunnel.name));
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -170,19 +182,27 @@ pub fn validate_tunnel(tunnel: &Tunnel) -> Result<(), String> {
     }
 
     if tunnel.jump_host_enabled {
-        if tunnel
+        let has_jump_reference = !tunnel
+            .jump_host_id
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .is_empty();
+        let has_manual_jump_host = !tunnel
             .jump_host
             .as_deref()
             .unwrap_or_default()
             .trim()
-            .is_empty()
-        {
+            .is_empty();
+
+        if !has_jump_reference && !has_manual_jump_host {
             return Err(format!("Tunnel '{}' jump host is required", tunnel.name));
         }
-        if tunnel.jump_port.unwrap_or_default() == 0 {
+        if !has_jump_reference && tunnel.jump_port.unwrap_or_default() == 0 {
             return Err(format!("Tunnel '{}' jump port is invalid", tunnel.name));
         }
-        if tunnel
+        if !has_jump_reference
+            && tunnel
             .jump_user
             .as_deref()
             .unwrap_or_default()
@@ -224,7 +244,7 @@ impl ConfigStore {
     }
 
     pub fn get_events_path(&self) -> PathBuf {
-        self.base_path.join("events.json")
+        self.base_path.join("events.jsonl")
     }
 
     pub fn load_config(&self) -> Result<AppConfig, String> {
@@ -380,6 +400,7 @@ mod tests {
             ssh_identity_file: None,
             ssh_password: None,
             jump_host_enabled: false,
+            jump_host_id: None,
             jump_host: None,
             jump_port: None,
             jump_user: None,

@@ -130,10 +130,16 @@ impl TunnelManager {
         // Resolve Jump Host configuration if enabled
         let jump_config = if tunnel.jump_host_enabled {
             let config = ConfigStore::new().load_config()?;
-            let jump_host = tunnel.jump_host.clone().unwrap_or_default();
-            if let Some(selected) = config.tunnels.iter().find(|t| t.name == jump_host).cloned() {
+            if let Some(jump_host_id) = tunnel.jump_host_id.as_deref() {
+                let selected = config
+                    .tunnels
+                    .iter()
+                    .find(|candidate| candidate.id == jump_host_id)
+                    .cloned()
+                    .ok_or_else(|| format!("Tunnel '{}' jump host reference was not found", tunnel.name))?;
                 Some(selected)
             } else {
+                let jump_host = tunnel.jump_host.clone().unwrap_or_default();
                 Some(Tunnel {
                     id: format!("{}_manual_jump", tunnel.id),
                     name: jump_host.clone(),
@@ -150,6 +156,7 @@ impl TunnelManager {
                     ssh_identity_file: tunnel.jump_identity_file.clone(),
                     ssh_password: tunnel.jump_password.clone(),
                     jump_host_enabled: false,
+                    jump_host_id: None,
                     jump_host: None,
                     jump_port: None,
                     jump_user: None,
@@ -184,7 +191,7 @@ impl TunnelManager {
                 identity_file: t_clone.ssh_identity_file.as_deref(),
                 password: t_clone.ssh_password.as_deref(),
                 passphrase: passphrase_conn.as_deref(),
-                known_hosts_policy: KnownHostsPolicy::TrustPermanently,
+                known_hosts_policy: KnownHostsPolicy::RequireKnown,
                 jump_host_config: jump_config.as_ref(),
             })
             .await;

@@ -11,6 +11,7 @@ use crate::config::{
 use crate::diagnostics::{run_diagnostics, DiagnosticStep};
 use crate::event_logger::{EventLogger, EventType, LogEvent};
 use crate::manager::TunnelManager;
+use crate::ssh::engine::SshSession;
 use crate::ssh_config::{parse_ssh_config, SshHostConfig};
 use std::sync::Arc;
 use tauri::menu::{Menu, MenuItem};
@@ -86,7 +87,13 @@ async fn test_connection(
     tunnel: Tunnel,
     passphrase: Option<String>,
 ) -> Result<Vec<DiagnosticStep>, String> {
-    Ok(run_diagnostics(&tunnel, passphrase.as_deref()).await)
+    let config = ConfigStore::new().load_config().unwrap_or_default();
+    Ok(run_diagnostics(&tunnel, &config.tunnels, passphrase.as_deref()).await)
+}
+
+#[tauri::command]
+async fn trust_host_key(host: String, port: u16) -> Result<(), String> {
+    SshSession::trust_host_key(&host, port).await
 }
 
 #[tauri::command]
@@ -289,6 +296,7 @@ pub fn run() {
             import_ssh_config,
             select_private_key_file,
             test_connection,
+            trust_host_key,
             start_tunnel,
             stop_tunnel,
             get_tunnel_status,

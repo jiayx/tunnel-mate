@@ -12,7 +12,11 @@ pub struct DiagnosticStep {
     pub message: String,
 }
 
-pub async fn run_diagnostics(tunnel: &Tunnel, passphrase: Option<&str>) -> Vec<DiagnosticStep> {
+pub async fn run_diagnostics(
+    tunnel: &Tunnel,
+    all_tunnels: &[Tunnel],
+    passphrase: Option<&str>,
+) -> Vec<DiagnosticStep> {
     let mut steps = Vec::new();
 
     if let Some(bind_target) = resolve_local_bind_check(tunnel) {
@@ -91,7 +95,7 @@ pub async fn run_diagnostics(tunnel: &Tunnel, passphrase: Option<&str>) -> Vec<D
         }
     }
 
-    let target = resolve_diagnostic_target(tunnel);
+    let target = resolve_diagnostic_target(tunnel, all_tunnels);
     let addr = match format!("{}:{}", target.host, target.port).to_socket_addrs() {
         Ok(mut addrs) => {
             if let Some(addr) = addrs.next() {
@@ -214,8 +218,22 @@ fn endpoint_to_diagnostic(endpoint: &Endpoint, prefix: &'static str) -> Diagnost
     }
 }
 
-fn resolve_diagnostic_target(tunnel: &Tunnel) -> DiagnosticTarget {
+fn resolve_diagnostic_target(tunnel: &Tunnel, all_tunnels: &[Tunnel]) -> DiagnosticTarget {
     if tunnel.jump_host_enabled {
+        if let Some(jump_host_id) = tunnel.jump_host_id.as_deref() {
+            if let Some(jump_host) = all_tunnels.iter().find(|candidate| candidate.id == jump_host_id)
+            {
+                return DiagnosticTarget {
+                    host: jump_host.ssh_host.clone(),
+                    port: jump_host.ssh_port,
+                    user: jump_host.ssh_user.clone(),
+                    identity_file: jump_host.ssh_identity_file.clone(),
+                    password: jump_host.ssh_password.clone(),
+                    prefix: "[Jump Host] ",
+                };
+            }
+        }
+
         DiagnosticTarget {
             host: tunnel.jump_host.clone().unwrap_or_default(),
             port: tunnel.jump_port.unwrap_or_default(),
@@ -283,6 +301,7 @@ mod tests {
             ssh_identity_file: Some("/tmp/key".to_string()),
             ssh_password: None,
             jump_host_enabled: false,
+            jump_host_id: None,
             jump_host: None,
             jump_port: None,
             jump_user: None,
@@ -356,7 +375,7 @@ mod tests {
             listen: endpoint("127.0.0.1", 18080),
             target: endpoint("127.0.0.1", 80),
         });
-        let target = resolve_diagnostic_target(&tunnel);
+        let target = resolve_diagnostic_target(&tunnel, &[]);
 
         assert_eq!(target.host, "example.test");
         assert_eq!(target.port, 22);
