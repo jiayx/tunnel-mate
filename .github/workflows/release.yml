@@ -70,23 +70,31 @@ jobs:
           - platform: "macos-latest" # Builds for Apple Silicon (macOS)
             target: "aarch64-apple-darwin"
             args: "--target aarch64-apple-darwin --bundles dmg"
-            artifact_suffix: "macos_aarch64.dmg"
-            artifact_path: "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg"
+            primary_artifact_suffix: "macos_aarch64.dmg"
+            primary_artifact_path: "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg"
+            extra_artifact_suffix: ""
+            extra_artifact_path: ""
           - platform: "macos-latest" # Builds for Intel CPUs (macOS) via cross-compilation
             target: "x86_64-apple-darwin"
             args: "--target x86_64-apple-darwin --bundles dmg"
-            artifact_suffix: "macos_x64.dmg"
-            artifact_path: "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg"
+            primary_artifact_suffix: "macos_x64.dmg"
+            primary_artifact_path: "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg"
+            extra_artifact_suffix: ""
+            extra_artifact_path: ""
           - platform: "ubuntu-22.04" # Builds for Linux (.deb, .AppImage)
             target: ""
             args: "--bundles deb,appimage"
-            artifact_suffix: "linux_amd64.deb"
-            artifact_path: "src-tauri/target/release/bundle/deb/*.deb"
+            primary_artifact_suffix: "linux_amd64.deb"
+            primary_artifact_path: "src-tauri/target/release/bundle/deb/*.deb"
+            extra_artifact_suffix: "linux_amd64.AppImage"
+            extra_artifact_path: "src-tauri/target/release/bundle/appimage/*.AppImage"
           - platform: "windows-latest" # Builds for Windows (.msi, .exe)
             target: ""
             args: "--bundles msi,nsis"
-            artifact_suffix: ""
-            artifact_path: ""
+            primary_artifact_suffix: "windows_x64.msi"
+            primary_artifact_path: "src-tauri/target/release/bundle/msi/*.msi"
+            extra_artifact_suffix: "windows_x64-setup.exe"
+            extra_artifact_path: "src-tauri/target/release/bundle/nsis/*.exe"
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -138,38 +146,20 @@ jobs:
           assetNamePattern: "[name]_[version]_[platform]_[arch][setup][ext]"
           args: ${{ matrix.args }}
 
-      - name: Upload Build Artifacts (for branch testing)
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') && matrix.platform != 'windows-latest' }}
+      - name: Upload Primary Build Artifact (for branch testing)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         uses: actions/upload-artifact@v7
         with:
-          name: Tunnel.Mate_${{ steps.build_tauri.outputs.appVersion }}_${{ matrix.artifact_suffix }}
-          path: ${{ matrix.artifact_path }}
+          name: Tunnel.Mate_${{ steps.build_tauri.outputs.appVersion }}_${{ matrix.primary_artifact_suffix }}
+          path: ${{ matrix.primary_artifact_path }}
           archive: false
           if-no-files-found: warn
 
-      - name: Upload Windows MSI Artifact (for branch testing)
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'windows-latest' }}
+      - name: Upload Additional Build Artifact (for branch testing)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') && matrix.extra_artifact_path != '' }}
         uses: actions/upload-artifact@v7
         with:
-          name: Tunnel.Mate_${{ steps.build_tauri.outputs.appVersion }}_windows_x64.msi
-          path: src-tauri/target/release/bundle/msi/*.msi
-          archive: false
-          if-no-files-found: warn
-
-      - name: Upload Windows NSIS Artifact (for branch testing)
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'windows-latest' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: Tunnel.Mate_${{ steps.build_tauri.outputs.appVersion }}_windows_x64-setup.exe
-          path: src-tauri/target/release/bundle/nsis/*.exe
-          archive: false
-          if-no-files-found: warn
-
-      - name: Upload Linux AppImage Artifact (for branch testing)
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'ubuntu-22.04' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: Tunnel.Mate_${{ steps.build_tauri.outputs.appVersion }}_linux_amd64.AppImage
-          path: src-tauri/target/release/bundle/appimage/*.AppImage
+          name: Tunnel.Mate_${{ steps.build_tauri.outputs.appVersion }}_${{ matrix.extra_artifact_suffix }}
+          path: ${{ matrix.extra_artifact_path }}
           archive: false
           if-no-files-found: warn
