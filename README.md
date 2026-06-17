@@ -76,6 +76,27 @@ The output installers will be generated under `src-tauri/target/release/bundle/`
 
 ---
 
+## 🍏 macOS Installation Notes (Bypass Security Warning)
+
+Since this application is not signed and notarized with a paid Apple Developer Account, macOS Gatekeeper may show a warning on first launch (including installation via Homebrew):
+> **"Tunnel Mate cannot be opened because the developer cannot be verified"** or **"Apple cannot verify that this app is free from malware"**
+
+You can easily bypass this security warning using one of the following methods:
+
+#### Method 1: Right-Click Open (Recommended & Easiest)
+1. Open **Finder** and go to your **Applications** folder.
+2. Locate **Tunnel Mate**, **right-click** (or hold `Control` and click) the app icon, and select **Open**.
+3. In the dialog box that appears, click the **Open** button.
+4. *Note: You only need to do this once. After this, you can open the app normally by double-clicking it.*
+
+#### Method 2: Allow in System Settings
+1. Try to open the app, and close the security warning dialog when it appears.
+2. Open **System Settings** -> **Privacy & Security** on your Mac.
+3. Scroll down to the **Security** section. You will see a message: *"Tunnel Mate" was blocked from use because it is not from an identified developer.*
+4. Click **Open Anyway**, enter your Mac password or use Touch ID, and click **Open** to confirm.
+
+---
+
 ## 📦 CI/CD & Auto-Packaging
 
 This project features a fully configured GitHub Actions workflow (`.github/workflows/release.yml`) that builds and packages the application for 3 major platforms:
