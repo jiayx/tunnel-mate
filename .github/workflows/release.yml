@@ -163,3 +163,84 @@ jobs:
           path: ${{ matrix.extra_artifact_path }}
           archive: false
           if-no-files-found: warn
+
+  update-brew:
+    needs: build-tauri
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          # Download all dmg files for this release tag
+          gh release download v$VERSION --repo ${{ github.repository }} --pattern "*.dmg" --dir dmg-files
+
+      - name: Calculate SHA256
+        run: |
+          cd dmg-files
+          ARM_FILE=$(ls *aarch64.dmg)
+          X64_FILE=$(ls *x64.dmg)
+
+          ARM_SHA=$(shasum -a 256 "$ARM_FILE" | cut -d' ' -f1)
+          X64_SHA=$(shasum -a 256 "$X64_FILE" | cut -d' ' -f1)
+
+          echo "ARM_SHA=$ARM_SHA" >> $GITHUB_ENV
+          echo "X64_SHA=$X64_SHA" >> $GITHUB_ENV
+          echo "ARM_SHA is $ARM_SHA"
+          echo "X64_SHA is $X64_SHA"
+
+      - name: Checkout Homebrew Tap repo
+        uses: actions/checkout@v6
+        with:
+          repository: jiayx/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update Cask file
+        run: |
+          node -e "
+            const fs = require('fs');
+            const caskFile = 'homebrew-tap/Casks/tunnel-mate.rb';
+            const lines = fs.readFileSync(caskFile, 'utf8').split('\n');
+
+            let inIntel = false;
+            let inArm = false;
+            for (let i = 0; i < lines.length; i++) {
+              if (lines[i].includes('on_intel do')) {
+                inIntel = true;
+                inArm = false;
+              } else if (lines[i].includes('on_arm do')) {
+                inArm = true;
+                inIntel = false;
+              } else if (lines[i].trim() === 'end') {
+                inIntel = false;
+                inArm = false;
+              }
+
+              if (lines[i].includes('version \"')) {
+                lines[i] = lines[i].replace(/version \".*\"/, \`version \"\${process.env.VERSION}\"\`);
+              }
+
+              if (lines[i].includes('sha256 \"')) {
+                if (inIntel) {
+                  lines[i] = lines[i].replace(/sha256 \".*\"/, \`sha256 \"\${process.env.X64_SHA}\"\`);
+                } else if (inArm) {
+                  lines[i] = lines[i].replace(/sha256 \".*\"/, \`sha256 \"\${process.env.ARM_SHA}\"\`);
+                }
+              }
+            }
+
+            fs.writeFileSync(caskFile, lines.join('\n'));
+          "
+
+      - name: Commit and Push Cask updates
+        run: |
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/tunnel-mate.rb
+          git commit -m "chore: bump tunnel-mate to v${{ env.VERSION }}"
+          git push origin main
