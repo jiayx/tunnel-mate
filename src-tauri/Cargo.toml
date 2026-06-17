@@ -1,6 +1,6 @@
 [package]
 name = "tunnel-mate"
-version = "0.2.5"
+version = "0.2.6"
 description = "A cross-platform GUI for managing SSH tunnels"
 authors = ["jiayx"]
 edition = "2021"
