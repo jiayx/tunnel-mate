@@ -1,66 +1,119 @@
-name: "GPUI Build & Release"
+name: Build and release GPUI app
 
 on:
   push:
     branches: [main]
-    tags: ['v*']
+    tags: ["v0.5.*"]
   pull_request:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: tunnel-mate-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
+  version:
+    name: Resolve release version
+    runs-on: ubuntu-22.04
+    outputs:
+      value: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: version
+        name: Read and validate workspace version
+        shell: bash
+        run: |
+          version="$(awk '
+            /^\[workspace.package\]$/ { in_package = 1; next }
+            /^\[/ { in_package = 0 }
+            in_package && /^version = / {
+              gsub(/"/, "", $3)
+              print $3
+              exit
+            }
+          ' Cargo.toml)"
+
+          if [[ -z "$version" ]]; then
+            echo "Could not read workspace.package.version" >&2
+            exit 1
+          fi
+
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag="${GITHUB_REF_NAME}"
+            if [[ ! "$tag" =~ ^v0\.5\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "Release tags must use the v0.5.x version line: $tag" >&2
+              exit 1
+            fi
+            if [[ "$tag" != "v$version" ]]; then
+              echo "Tag $tag does not match Cargo version v$version" >&2
+              exit 1
+            fi
+          fi
+
   quality:
+    name: Quality (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-latest, ubuntu-22.04, windows-latest]
-    runs-on: ${{ matrix.platform }}
+        os: [macos-15, ubuntu-22.04, windows-2022]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: './ -> target'
+          workspaces: "./ -> target"
       - name: Install Linux native dependencies
-        if: matrix.platform == 'ubuntu-22.04'
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libappindicator3-dev libxdo-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libfontconfig1-dev libfreetype6-dev libvulkan-dev patchelf
+          sudo apt-get install -y libgtk-3-dev libappindicator3-dev libxdo-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libfontconfig1-dev libfreetype6-dev libvulkan-dev
+      - name: Check formatting
+        run: cargo fmt --all -- --check
       - name: Check workspace
-        run: cargo check --workspace
+        run: cargo check --workspace --locked
       - name: Test workspace
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   package:
-    needs: quality
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    name: Package (${{ matrix.artifact }})
+    needs: [version, quality]
+    if: startsWith(github.ref, 'refs/tags/v0.5.') || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-latest
+          - os: macos-15
             target: aarch64-apple-darwin
             formats: dmg
-            artifact: target/aarch64-apple-darwin/release/*.dmg
-            name: tunnel-mate-macos-aarch64
-          - platform: macos-latest
+            artifact: tunnel-mate-macos-arm64
+            asset_suffix: darwin_aarch64.dmg
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             formats: dmg
-            artifact: target/x86_64-apple-darwin/release/*.dmg
-            name: tunnel-mate-macos-x64
-          - platform: ubuntu-22.04
+            artifact: tunnel-mate-macos-x64
+            asset_suffix: darwin_x64.dmg
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             formats: deb,appimage
-            artifact: target/x86_64-unknown-linux-gnu/release/*.{deb,AppImage}
-            name: tunnel-mate-linux-x64
-          - platform: windows-latest
+            artifact: tunnel-mate-linux-x64
+            asset_suffix: ""
+          - os: windows-2022
             target: x86_64-pc-windows-msvc
             formats: wix,nsis
-            artifact: target/x86_64-pc-windows-msvc/release/*.{msi,exe}
-            name: tunnel-mate-windows-x64
-    runs-on: ${{ matrix.platform }}
+            artifact: tunnel-mate-windows-x64
+            asset_suffix: ""
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -68,28 +121,41 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: './ -> target'
+          workspaces: "./ -> target"
+          key: ${{ matrix.target }}
       - name: Install Linux native dependencies
-        if: matrix.platform == 'ubuntu-22.04'
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libappindicator3-dev libxdo-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libfontconfig1-dev libfreetype6-dev libvulkan-dev patchelf
       - name: Install cargo-packager
         run: cargo install cargo-packager --version 0.11.8 --locked
       - name: Build native client
-        run: cargo build --release -p tunnel-mate-gpui --target ${{ matrix.target }}
+        run: cargo build --release --locked -p tunnel-mate-gpui --target ${{ matrix.target }}
       - name: Package native client
-        run: cargo packager --manifest-path apps/tunnel-mate-gpui/Cargo.toml --release --target ${{ matrix.target }} --formats ${{ matrix.formats }}
+        run: cargo packager --manifest-path apps/tunnel-mate-gpui/Cargo.toml --release --target ${{ matrix.target }} --formats ${{ matrix.formats }} --out-dir dist --binaries-dir target/${{ matrix.target }}/release
+      - name: Normalize macOS asset name
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          source_file="$(find dist -maxdepth 1 -type f -name '*.dmg' -print -quit)"
+          if [[ -z "$source_file" ]]; then
+            echo "cargo-packager did not produce a DMG" >&2
+            exit 1
+          fi
+          mv "$source_file" "dist/Tunnel.Mate_${{ needs.version.outputs.value }}_${{ matrix.asset_suffix }}"
       - uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.name }}
-          path: ${{ matrix.artifact }}
+          name: ${{ matrix.artifact }}
+          path: dist/*
           if-no-files-found: error
+          retention-days: 14
 
   release:
-    needs: package
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    name: Publish GitHub release
+    needs: [version, package]
+    if: startsWith(github.ref, 'refs/tags/v0.5.')
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
@@ -101,5 +167,64 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release view "${{ github.ref_name }}" >/dev/null 2>&1 || gh release create "${{ github.ref_name }}" --generate-notes
-          gh release upload "${{ github.ref_name }}" release-assets/* --clobber
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
+            gh release create "$GITHUB_REF_NAME" --verify-tag --title "Tunnel Mate $GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
+
+  homebrew:
+    name: Update Homebrew Cask
+    needs: [version, package, release]
+    if: startsWith(github.ref, 'refs/tags/v0.5.')
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: tunnel-mate-macos-arm64
+          path: dmg/arm64
+      - uses: actions/download-artifact@v8
+        with:
+          name: tunnel-mate-macos-x64
+          path: dmg/x64
+      - uses: actions/checkout@v6
+        with:
+          repository: jiayx/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+      - name: Update version and checksums
+        working-directory: homebrew-tap
+        env:
+          VERSION: ${{ needs.version.outputs.value }}
+          ARM_DMG: ../dmg/arm64/Tunnel.Mate_${{ needs.version.outputs.value }}_darwin_aarch64.dmg
+          X64_DMG: ../dmg/x64/Tunnel.Mate_${{ needs.version.outputs.value }}_darwin_x64.dmg
+        run: |
+          export ARM_SHA="$(sha256sum "$ARM_DMG" | cut -d ' ' -f 1)"
+          export X64_SHA="$(sha256sum "$X64_DMG" | cut -d ' ' -f 1)"
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          path = Path("Casks/tunnel-mate.rb")
+          content = path.read_text()
+          content = re.sub(r'version "[^"]+"', f'version "{os.environ["VERSION"]}"', content, count=1)
+
+          def replace_sha(block_name: str, sha: str, source: str) -> str:
+              pattern = rf'({block_name} do.*?sha256 ")[^"]+(".*?end)'
+              updated, count = re.subn(pattern, rf'\g<1>{sha}\g<2>', source, count=1, flags=re.S)
+              if count != 1:
+                  raise SystemExit(f"Could not update {block_name} checksum")
+              return updated
+
+          content = replace_sha("on_intel", os.environ["X64_SHA"], content)
+          content = replace_sha("on_arm", os.environ["ARM_SHA"], content)
+          content = content.replace("# Tauri 默认打包的 macOS 应用文件名\n", "")
+          path.write_text(content)
+          PY
+      - name: Commit Homebrew update
+        working-directory: homebrew-tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/tunnel-mate.rb
+          git diff --cached --quiet || git commit -m "chore: bump tunnel-mate to v${{ needs.version.outputs.value }}"
+          git push origin main

@@ -80,6 +80,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 ## Packaging and releases
 
+`v0.2.6` is the final Tauri release. Native GPUI releases start at `v0.5.0`
+and continue on the `v0.5.x` version line.
+
 ```bash
 cargo install cargo-packager --version 0.11.8 --locked
 cargo build --release -p tunnel-mate-gpui

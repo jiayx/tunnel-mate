@@ -55,6 +55,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 ## 打包与发布
 
+`v0.2.6` 是最后一个 Tauri 版本。原生 GPUI 版本从 `v0.5.0` 开始，后续沿用 `v0.5.x` 版本线。
+
 ```bash
 cargo install cargo-packager --version 0.11.8 --locked
 cargo build --release -p tunnel-mate-gpui
