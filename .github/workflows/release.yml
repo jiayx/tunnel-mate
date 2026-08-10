@@ -133,7 +133,7 @@ jobs:
       - name: Build native client
         run: cargo build --release --locked -p tunnel-mate-gpui --target ${{ matrix.target }}
       - name: Package native client
-        run: cargo packager --manifest-path apps/tunnel-mate-gpui/Cargo.toml --release --target ${{ matrix.target }} --formats ${{ matrix.formats }} --out-dir dist --binaries-dir target/${{ matrix.target }}/release
+        run: cargo packager --manifest-path apps/tunnel-mate-gpui/Cargo.toml --release --target ${{ matrix.target }} --formats ${{ matrix.formats }} --out-dir "${{ github.workspace }}/dist" --binaries-dir "${{ github.workspace }}/target/${{ matrix.target }}/release"
       - name: Normalize macOS asset name
         if: runner.os == 'macOS'
         shell: bash
