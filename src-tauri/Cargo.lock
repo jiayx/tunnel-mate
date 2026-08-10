@@ -5495,14 +5495,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
-name = "tunnel-mate"
-version = "0.1.0"
+name = "tunnel-core"
+version = "0.3.0-alpha.1"
 dependencies = [
  "chrono",
  "dirs 6.0.0",
  "keyring",
  "regex",
  "russh",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "tunnel-mate"
+version = "0.2.6"
+dependencies = [
+ "dirs 6.0.0",
  "serde",
  "serde_json",
  "tauri",
@@ -5512,7 +5523,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-updater",
  "tokio",
- "uuid",
+ "tunnel-core",
 ]
 
 [[package]]

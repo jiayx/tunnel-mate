@@ -4,9 +4,9 @@
   "version": "0.2.6",
   "identifier": "com.jiayx.tunnel-mate",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "pnpm dev:legacy",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm build:legacy",
     "frontendDist": "../dist"
   },
   "app": {

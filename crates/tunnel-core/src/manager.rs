@@ -1,11 +1,10 @@
 use crate::config::{ConfigStore, Tunnel, TunnelStatus};
-use crate::event_logger::{EventLogger, EventType};
+use crate::event_logger::{EventLogger, EventType, LogEvent};
 use crate::ssh::engine::{ConnectOptions, KnownHostsPolicy, SshSession};
 use crate::ssh::tunnel::{LogSink, TunnelWorker};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tauri::{ipc::Channel, AppHandle, Emitter};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -16,6 +15,14 @@ pub struct StatusPayload {
     pub status: TunnelStatus,
     pub message: Option<String>,
 }
+
+#[derive(Clone)]
+pub enum RuntimeEvent {
+    Status(StatusPayload),
+    Activity(LogEvent),
+}
+
+pub type EventSink = Arc<dyn Fn(RuntimeEvent) + Send + Sync>;
 
 pub struct ActiveTunnel {
     pub tunnel: Tunnel,
@@ -29,14 +36,26 @@ pub struct TunnelManager {
     active_tunnels: HashMap<String, ActiveTunnel>,
     reconnect_tasks: HashMap<String, tokio::task::JoinHandle<()>>,
     statuses: HashMap<String, TunnelStatus>,
+    events: EventSink,
+}
+
+impl Default for TunnelManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TunnelManager {
     pub fn new() -> Self {
+        Self::with_event_sink(Arc::new(|_| {}))
+    }
+
+    pub fn with_event_sink(events: EventSink) -> Self {
         Self {
             active_tunnels: HashMap::new(),
             reconnect_tasks: HashMap::new(),
             statuses: HashMap::new(),
+            events,
         }
     }
 
@@ -47,38 +66,28 @@ impl TunnelManager {
             .unwrap_or(TunnelStatus::Stopped)
     }
 
+    pub fn set_event_sink(&mut self, events: EventSink) {
+        self.events = events;
+    }
+
     pub async fn start_tunnel(
         manager_state: Arc<Mutex<Self>>,
-        app: AppHandle,
         tunnel: Tunnel,
         passphrase: Option<String>,
-        log_channel: Channel<String>,
+        log_sink: LogSink,
     ) -> Result<(), String> {
-        Self::start_tunnel_attempt(
-            manager_state,
-            app,
-            tunnel,
-            passphrase,
-            LogSink::Channel {
-                channel: log_channel,
-                session_id: String::new(),
-            },
-            0,
-        )
-        .await
+        Self::start_tunnel_attempt(manager_state, tunnel, passphrase, log_sink, 0).await
     }
 
     pub async fn start_tunnel_silent(
         manager_state: Arc<Mutex<Self>>,
-        app: AppHandle,
         tunnel: Tunnel,
     ) -> Result<(), String> {
-        Self::start_tunnel_attempt(manager_state, app, tunnel, None, LogSink::Silent, 0).await
+        Self::start_tunnel_attempt(manager_state, tunnel, None, LogSink::Silent, 0).await
     }
 
     async fn start_tunnel_attempt(
         manager_state: Arc<Mutex<Self>>,
-        app: AppHandle,
         tunnel: Tunnel,
         passphrase: Option<String>,
         log_channel: LogSink,
@@ -87,12 +96,10 @@ impl TunnelManager {
         let tunnel_id = tunnel.id.clone();
         let session_id = Uuid::new_v4().to_string();
         let logger = EventLogger::new();
-        let log_channel = match log_channel {
-            LogSink::Channel { channel, .. } => LogSink::Channel {
-                channel,
-                session_id: session_id.clone(),
-            },
-            LogSink::Silent => LogSink::Silent,
+        let log_channel = log_channel.with_session(session_id.clone());
+        let events = {
+            let manager = manager_state.lock().await;
+            manager.events.clone()
         };
 
         // 1. Check if already running
@@ -112,13 +119,13 @@ impl TunnelManager {
 
         // Notify connecting status
         emit_status(
-            &app,
+            &events,
             &tunnel_id,
             TunnelStatus::Connecting,
             Some("Connecting to SSH host...".to_string()),
         );
         let _ = emit_activity_event(
-            &app,
+            &events,
             &logger,
             Some(session_id.clone()),
             Some(tunnel_id.clone()),
@@ -136,7 +143,9 @@ impl TunnelManager {
                     .iter()
                     .find(|candidate| candidate.id == jump_host_id)
                     .cloned()
-                    .ok_or_else(|| format!("Tunnel '{}' jump host reference was not found", tunnel.name))?;
+                    .ok_or_else(|| {
+                        format!("Tunnel '{}' jump host reference was not found", tunnel.name)
+                    })?;
                 Some(selected)
             } else {
                 let jump_host = tunnel.jump_host.clone().unwrap_or_default();
@@ -175,7 +184,7 @@ impl TunnelManager {
 
         let t_clone = tunnel.clone();
         let m_state = manager_state.clone();
-        let app_handle = app.clone();
+        let task_events = events.clone();
         let passphrase_conn = passphrase.clone();
         let session_id_task = session_id.clone();
 
@@ -201,7 +210,7 @@ impl TunnelManager {
                 Err(err_msg) => {
                     log_ch.send(format!("[ERROR] Connection failed: {}", err_msg));
                     let _ = emit_activity_event(
-                        &app_handle,
+                        &task_events,
                         &logger,
                         Some(session_id_task.clone()),
                         Some(tunnel_id.clone()),
@@ -210,7 +219,9 @@ impl TunnelManager {
                         format!("Connection failed: {}", err_msg),
                     );
 
-                    if err_msg == "PASSPHRASE_REQUIRED" {
+                    if err_msg == "PASSPHRASE_REQUIRED"
+                        || err_msg.starts_with("HOST_KEY_NOT_TRUSTED|")
+                    {
                         {
                             let mut manager = m_state.lock().await;
                             manager
@@ -218,16 +229,16 @@ impl TunnelManager {
                                 .insert(tunnel_id.clone(), TunnelStatus::Failed);
                         }
                         emit_status(
-                            &app_handle,
+                            &task_events,
                             &tunnel_id,
                             TunnelStatus::Failed,
-                            Some("PASSPHRASE_REQUIRED".to_string()),
+                            Some(err_msg),
                         );
                     } else if tunnel.auto_reconnect {
                         // Spawn reconnect task
                         Self::spawn_reconnect_flow(
                             m_state,
-                            app_handle,
+                            task_events,
                             tunnel,
                             passphrase,
                             reconnect_attempt + 1,
@@ -240,7 +251,12 @@ impl TunnelManager {
                                 .statuses
                                 .insert(tunnel_id.clone(), TunnelStatus::Failed);
                         }
-                        emit_status(&app_handle, &tunnel_id, TunnelStatus::Failed, Some(err_msg));
+                        emit_status(
+                            &task_events,
+                            &tunnel_id,
+                            TunnelStatus::Failed,
+                            Some(err_msg),
+                        );
                     }
                     return;
                 }
@@ -261,7 +277,7 @@ impl TunnelManager {
                         let err_msg = format!("Failed to start forwarding listeners: {}", e);
                         log_ch.send(format!("[ERROR] {}", err_msg));
                         let _ = emit_activity_event(
-                            &app_handle,
+                            &task_events,
                             &logger,
                             Some(session_id_task.clone()),
                             Some(tunnel_id.clone()),
@@ -275,7 +291,12 @@ impl TunnelManager {
                                 .statuses
                                 .insert(tunnel_id.clone(), TunnelStatus::Failed);
                         }
-                        emit_status(&app_handle, &tunnel_id, TunnelStatus::Failed, Some(err_msg));
+                        emit_status(
+                            &task_events,
+                            &tunnel_id,
+                            TunnelStatus::Failed,
+                            Some(err_msg),
+                        );
                         ssh_session.disconnect().await;
                         return;
                     }
@@ -298,9 +319,9 @@ impl TunnelManager {
                 manager.active_tunnels.insert(tunnel_id.clone(), active);
             }
 
-            emit_status(&app_handle, &tunnel_id, TunnelStatus::Running, None);
+            emit_status(&task_events, &tunnel_id, TunnelStatus::Running, None);
             let _ = emit_activity_event(
-                &app_handle,
+                &task_events,
                 &logger,
                 Some(session_id_task.clone()),
                 Some(tunnel_id.clone()),
@@ -310,14 +331,15 @@ impl TunnelManager {
             );
 
             // Start background heartbeat monitor for this tunnel
-            Self::spawn_monitor(m_state, app_handle, tunnel_id, tunnel, passphrase);
+            Self::spawn_monitor(m_state, task_events, tunnel_id, tunnel, passphrase);
         });
 
         Ok(())
     }
 
-    pub async fn stop_tunnel(&mut self, app: &AppHandle, tunnel_id: &str) -> Result<(), String> {
+    pub async fn stop_tunnel(&mut self, tunnel_id: &str) -> Result<(), String> {
         let logger = EventLogger::new();
+        let events = self.events.clone();
 
         // Cancel reconnect task if exists
         if let Some(task) = self.reconnect_tasks.remove(tunnel_id) {
@@ -334,7 +356,7 @@ impl TunnelManager {
             active.worker.stop().await;
             active.ssh_session.disconnect().await;
             let _ = emit_activity_event(
-                app,
+                &events,
                 &logger,
                 Some(session_id),
                 Some(tunnel_id.to_string()),
@@ -348,14 +370,22 @@ impl TunnelManager {
             .insert(tunnel_id.to_string(), TunnelStatus::Stopped);
 
         // Always emit stopped status so the frontend updates
-        emit_status(app, tunnel_id, TunnelStatus::Stopped, None);
+        emit_status(&events, tunnel_id, TunnelStatus::Stopped, None);
 
         Ok(())
     }
 
+    #[allow(dead_code)] // Used by the GPUI client through the shared core crate.
+    pub async fn stop_all(&mut self) {
+        let tunnel_ids = self.active_tunnels.keys().cloned().collect::<Vec<_>>();
+        for tunnel_id in tunnel_ids {
+            let _ = self.stop_tunnel(&tunnel_id).await;
+        }
+    }
+
     fn spawn_reconnect_flow(
         manager_state: Arc<Mutex<Self>>,
-        app: AppHandle,
+        events: EventSink,
         tunnel: Tunnel,
         passphrase: Option<String>,
         attempt: u32,
@@ -374,13 +404,13 @@ impl TunnelManager {
                 manager.statuses.insert(t_id, TunnelStatus::Failed);
             });
             emit_status(
-                &app,
+                &events,
                 &tunnel_id,
                 TunnelStatus::Failed,
                 Some("Max reconnect attempts reached".to_string()),
             );
             let _ = emit_activity_event(
-                &app,
+                &events,
                 &logger,
                 None,
                 Some(tunnel_id.clone()),
@@ -401,7 +431,7 @@ impl TunnelManager {
         });
 
         emit_status(
-            &app,
+            &events,
             &tunnel_id,
             TunnelStatus::Reconnecting,
             Some(format!(
@@ -413,7 +443,7 @@ impl TunnelManager {
         let tunnel_id_task = tunnel_id.clone();
         let tunnel_task = tunnel.clone();
         let manager_state_task = manager_state.clone();
-        let app_task = app.clone();
+        let task_events = events.clone();
         let passphrase_task = passphrase.clone();
         let log_channel_task = log_channel.clone();
 
@@ -422,7 +452,7 @@ impl TunnelManager {
 
             // Log attempt
             let _ = emit_activity_event(
-                &app_task,
+                &task_events,
                 &logger,
                 None,
                 Some(tunnel_id_task.clone()),
@@ -434,7 +464,6 @@ impl TunnelManager {
             // Try to connect again
             let start_res = Self::start_tunnel_attempt(
                 manager_state_task.clone(),
-                app_task.clone(),
                 tunnel_task.clone(),
                 passphrase_task.clone(),
                 log_channel_task.clone(),
@@ -446,7 +475,7 @@ impl TunnelManager {
                 // If start failed immediately, chain to next attempt
                 Self::spawn_reconnect_flow(
                     manager_state_task,
-                    app_task,
+                    task_events,
                     tunnel_task,
                     passphrase_task,
                     attempt + 1,
@@ -465,7 +494,7 @@ impl TunnelManager {
 
     fn spawn_monitor(
         manager_state: Arc<Mutex<Self>>,
-        app: AppHandle,
+        events: EventSink,
         tunnel_id: String,
         tunnel: Tunnel,
         passphrase: Option<String>,
@@ -502,7 +531,7 @@ impl TunnelManager {
 
                     let logger = EventLogger::new();
                     let _ = emit_activity_event(
-                        &app,
+                        &events,
                         &logger,
                         None,
                         Some(tunnel_id.clone()),
@@ -516,7 +545,7 @@ impl TunnelManager {
                         if let Some(log_ch) = log_channel {
                             Self::spawn_reconnect_flow(
                                 m_state.clone(),
-                                app.clone(),
+                                events.clone(),
                                 tunnel.clone(),
                                 passphrase.clone(),
                                 1,
@@ -531,7 +560,7 @@ impl TunnelManager {
                                 .insert(tunnel_id.clone(), TunnelStatus::Failed);
                         }
                         emit_status(
-                            &app,
+                            &events,
                             &tunnel_id,
                             TunnelStatus::Failed,
                             Some("Session disconnected".to_string()),
@@ -544,22 +573,16 @@ impl TunnelManager {
     }
 }
 
-fn emit_status(app: &AppHandle, tunnel_id: &str, status: TunnelStatus, message: Option<String>) {
-    app.emit(
-        "tunnel-status-changed",
-        StatusPayload {
-            tunnel_id: tunnel_id.to_string(),
-            status,
-            message,
-        },
-    )
-    .ok();
-
-    super::update_tray_menu(app);
+fn emit_status(events: &EventSink, tunnel_id: &str, status: TunnelStatus, message: Option<String>) {
+    events(RuntimeEvent::Status(StatusPayload {
+        tunnel_id: tunnel_id.to_string(),
+        status,
+        message,
+    }));
 }
 
 fn emit_activity_event(
-    app: &AppHandle,
+    events: &EventSink,
     logger: &EventLogger,
     session_id: Option<String>,
     tunnel_id: Option<String>,
@@ -568,6 +591,6 @@ fn emit_activity_event(
     message: String,
 ) -> Result<crate::event_logger::LogEvent, String> {
     let event = logger.log_with_session(session_id, tunnel_id, tunnel_name, event_type, message)?;
-    let _ = app.emit("activity-event-created", event.clone());
+    events(RuntimeEvent::Activity(event.clone()));
     Ok(event)
 }

@@ -3,7 +3,7 @@ use crate::ssh::engine::{ForwardedTcp, SharedSshHandle};
 use crate::ssh::socks5::negotiate_socks5;
 use std::future::Future;
 use std::net::TcpListener as StdTcpListener;
-use tauri::ipc::Channel;
+use std::sync::Arc;
 use tokio::io::copy_bidirectional;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, watch};
@@ -13,22 +13,39 @@ const FORWARD_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
 pub enum LogSink {
-    Channel {
-        channel: Channel<String>,
+    Callback {
+        callback: Arc<dyn Fn(String) + Send + Sync>,
         session_id: String,
     },
     Silent,
 }
 
 impl LogSink {
+    pub fn callback(callback: impl Fn(String) + Send + Sync + 'static) -> Self {
+        Self::Callback {
+            callback: Arc::new(callback),
+            session_id: String::new(),
+        }
+    }
+
+    pub fn with_session(&self, session_id: String) -> Self {
+        match self {
+            Self::Callback { callback, .. } => Self::Callback {
+                callback: callback.clone(),
+                session_id,
+            },
+            Self::Silent => Self::Silent,
+        }
+    }
+
     pub fn send(&self, message: String) {
-        if let LogSink::Channel {
-            channel,
+        if let LogSink::Callback {
+            callback,
             session_id,
         } = self
         {
             let short_session_id = session_id.get(..8).unwrap_or(session_id);
-            let _ = channel.send(format!("[session:{}] {}", short_session_id, message));
+            callback(format!("[session:{}] {}", short_session_id, message));
         }
     }
 }

@@ -1,116 +1,100 @@
-<p align="center">
-  <img src="src-tauri/icons/icon.png" alt="Tunnel Mate Logo" width="128" height="128">
-</p>
+# Tunnel Mate
 
-<h1 align="center">Tunnel Mate</h1>
+Tunnel Mate is a native, cross-platform SSH tunnel manager built with Rust and
+GPUI. Its compact main window focuses on tunnel status and one-click
+start/stop. Editing and diagnostics stay next to each tunnel, while infrequent
+options are kept in Advanced settings.
 
-<p align="center">
-  <strong>A lightweight, elegant, and secure cross-platform GUI application for managing SSH tunnels and port forwarding sessions.</strong>
-</p>
+[简体中文](README.zh-CN.md)
 
-<p align="center">
-  <a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a>
-</p>
+## Features
 
----
+- Local (`-L`), remote (`-R`), and SOCKS5 (`-D`) forwarding
+- Native tunnel and group CRUD with SSH config host import
+- Passwords stored in the operating-system keyring, never in config backups
+- Jump hosts, host-key trust prompts, encrypted-key passphrase prompts, and
+  automatic reconnect
+- System tray controls, start-with-app tunnels, launch at login, start
+  minimized, and close to tray
+- Connection diagnostics, activity history, live logs, and config backup/import
+- Chinese and English UI selected from the operating-system language
 
-Tunnel Mate is built with Tauri v2 and React. It runs silently in your system tray and offers advanced connection diagnostics to ensure your secure connections are always active.
+## Using Tunnel Mate
 
----
+Create a tunnel with the **New tunnel** button, or import host details from
+`~/.ssh/config`. Local forwarding exposes a remote service on this computer;
+remote forwarding exposes a local service through the SSH server; SOCKS5 mode
+creates a local dynamic proxy.
 
-## 🌟 Key Features
+The SSH host and optional jump host can both be selected from SSH config.
+Tunnel Mate fills the resolved host, port, user, and identity file while keeping
+the SSH alias available for matching. New tunnels enable **Reconnect when the
+app starts** and **Automatic reconnect** by default.
 
-*   **SSH Tunnel GUI Management**: Easily configure and control Local (`-L`), Remote (`-R`), and Dynamic/SOCKS5 (`-D`) port forwarding tunnels.
-*   **System Tray Integration**:
-    *   Minimize to tray on startup.
-    *   Keep running in the background when closing the main window.
-    *   Quickly toggle tunnels or restore/hide the window from the tray menu.
-*   **SSH Config Host Import**: Automatically parse and import your configured SSH hosts directly from `~/.ssh/config`.
-*   **Connection Diagnostics**: Real-time diagnostic inspector that executes step-by-step connection checks (resolving DNS, checking port availability, authenticating SSH keys) to troubleshoot connection issues instantly.
-*   **Event Logger**: Comprehensive session log viewer tracking SSH connect, disconnect, timeout, and reconnect events.
-*   **Backup & Restore**: Easily export and import your tunnel configurations.
-*   **Auto-Adapting Tray Mode**: Tray icon automatically switches color/theme (black/white) based on macOS status bar light or dark theme.
+Use the inline **Edit** and **Diagnose** actions on a tunnel. Saving an unchanged
+running tunnel does nothing; saving actual changes asks for confirmation before
+disconnecting and reconnecting it. Diagnostics understand the active tunnel and
+do not report its own listening port as an unrelated conflict.
 
----
+Backups are portable JSON files without passwords. Export defaults to
+`~/Downloads`; importing a backup validates it, stops current sessions, replaces
+the configuration, and starts tunnels marked to reconnect on app launch.
 
-## 🛠️ Tech Stack
+On macOS, the application provides standard Application and Window menus and
+supports `Command-,` for Settings, `Command-W` to close the window, `Command-M`
+to minimize, and `Command-Q` to quit. If **Close to tray** is enabled, closing
+the window hides it while tunnels continue running; use the Dock icon or menu
+bar item to show it again.
 
-*   **Backend / System Wrapper**: [Tauri v2](https://tauri.app/) (written in Rust)
-*   **Frontend Library**: React 19
-*   **Language**: TypeScript
-*   **Bundler**: Vite
-*   **Styling**: Tailwind CSS
-*   **Icons**: Lucide React
+## Architecture
 
----
+- `apps/tunnel-mate-gpui`: primary native desktop application, pinned to the
+  synchronized `gpui-unofficial` and `gpui-platform-gpui-unofficial` 1.14.2
+  packages.
+- `crates/tunnel-core`: UI-independent configuration, credential, diagnostics,
+  SSH, forwarding, event, and tunnel-lifecycle implementation.
+- `src-tauri` and `src`: temporary compatibility client. It consumes the same
+  `tunnel-core`; no SSH implementation is duplicated there.
 
-## 🚀 Getting Started
+Existing users keep the same `TunnelMate/config.json`, `events.jsonl`, and
+system-keyring credentials when moving from the compatibility client.
 
-### Prerequisites
+## Development
 
-Ensure you have the following installed on your machine:
-1.  **Node.js** (LTS or later)
-2.  **Rust Toolchain** (via `rustup`)
-3.  **pnpm** (Package manager)
-4.  *(Linux only)* System build libraries (Webkit2GTK, GTK3, AppIndicator). See Tauri's Linux setup guide.
+Install the stable Rust toolchain. Linux also needs GTK 3, AppIndicator,
+XKBCommon, Wayland, and X11 development libraries.
 
-### Development Setup
-
-1.  Clone the repository and navigate to the project directory.
-2.  Install frontend dependencies:
-    ```bash
-    pnpm install
-    ```
-3.  Launch the application in development mode:
-    ```bash
-    pnpm tauri dev
-    ```
-
-### Local Build
-
-To compile and package the application installer locally for your current OS:
 ```bash
-pnpm tauri build
+cargo run -p tunnel-mate-gpui
+cargo check --workspace
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
 ```
-The output installers will be generated under `src-tauri/target/release/bundle/`.
 
----
+The npm aliases point to the native client:
 
-## 🍏 macOS Installation Notes (Bypass Security Warning)
+```bash
+pnpm dev
+pnpm build
+pnpm package:native
+```
 
-Since this application is not signed and notarized with a paid Apple Developer Account, macOS Gatekeeper may show a warning on first launch (including installation via Homebrew):
-> **"Tunnel Mate cannot be opened because the developer cannot be verified"** or **"Apple cannot verify that this app is free from malware"**
+The packaged macOS application is written to
+`target/release/Tunnel Mate.app`; installer paths vary by platform and format.
 
-You can easily bypass this security warning using one of the following methods:
+The compatibility frontend remains available through `pnpm dev:legacy` and
+`pnpm build:legacy`.
 
-#### Method 1: Right-Click Open (Recommended & Easiest)
-1. Open **Finder** and go to your **Applications** folder.
-2. Locate **Tunnel Mate**, **right-click** (or hold `Control` and click) the app icon, and select **Open**.
-3. In the dialog box that appears, click the **Open** button.
-4. *Note: You only need to do this once. After this, you can open the app normally by double-clicking it.*
+## Packaging and releases
 
-#### Method 2: Allow in System Settings
-1. Try to open the app, and close the security warning dialog when it appears.
-2. Open **System Settings** -> **Privacy & Security** on your Mac.
-3. Scroll down to the **Security** section. You will see a message: *"Tunnel Mate" was blocked from use because it is not from an identified developer.*
-4. Click **Open Anyway**, enter your Mac password or use Touch ID, and click **Open** to confirm.
+`pnpm package:native` builds and packages the current platform with
+`cargo-packager`. The `.github/workflows/gpui.yml` workflow checks macOS,
+Linux, and Windows and produces DMG, DEB/AppImage, and WiX/NSIS artifacts for
+manual or tagged releases.
 
----
+Unsigned macOS builds may require right-clicking the app and choosing **Open**
+the first time.
 
-## 📦 CI/CD & Auto-Packaging
+## License
 
-This project features a fully configured GitHub Actions workflow (`.github/workflows/release.yml`) that builds and packages the application for 3 major platforms:
-
-*   **macOS**: Compiles installers for both Apple Silicon (`aarch64-apple-darwin`) and Intel (`x86_64-apple-darwin`) macOS architectures.
-*   **Windows**: Generates both `.msi` and `.exe` (NSIS) installers.
-*   **Linux**: Generates Debian packages (`.deb`) and portable `.AppImage` packages.
-
-### Automated Releases:
-*   On pushing to `main` branch: Builds and uploads installer binaries to the Action run page as downloadable artifacts for quick testing.
-*   On pushing a version tag (e.g. `v0.1.0`): Automatically builds the application and drafts a GitHub Release draft containing all installer packages.
-
----
-
-## 📄 License
-
-This project is licensed under the [MIT License](LICENSE).
+[MIT](LICENSE)

@@ -35,11 +35,21 @@ pub struct EventLogger {
     store: ConfigStore,
 }
 
+impl Default for EventLogger {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EventLogger {
     pub fn new() -> Self {
         Self {
             store: ConfigStore::new(),
         }
+    }
+
+    pub fn with_store(store: ConfigStore) -> Self {
+        Self { store }
     }
 
     pub fn log(
@@ -119,5 +129,43 @@ impl EventLogger {
             fs::remove_file(&path).map_err(|e| format!("Failed to delete events file: {}", e))?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn appends_reads_and_clears_events_in_order() {
+        let directory = tempfile::tempdir().unwrap();
+        let logger =
+            EventLogger::with_store(ConfigStore::from_base_path(PathBuf::from(directory.path())));
+
+        logger
+            .log(
+                Some("one".into()),
+                Some("First".into()),
+                EventType::Started,
+                "connected".into(),
+            )
+            .unwrap();
+        logger
+            .log(
+                Some("two".into()),
+                Some("Second".into()),
+                EventType::Stopped,
+                "stopped".into(),
+            )
+            .unwrap();
+
+        let events = logger.get_events().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].tunnel_name.as_deref(), Some("First"));
+        assert_eq!(events[1].tunnel_name.as_deref(), Some("Second"));
+
+        logger.clear_events().unwrap();
+        assert!(logger.get_events().unwrap().is_empty());
     }
 }

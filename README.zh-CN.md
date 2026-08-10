@@ -1,116 +1,73 @@
-<p align="center">
-  <img src="src-tauri/icons/icon.png" alt="Tunnel Mate Logo" width="128" height="128">
-</p>
+# Tunnel Mate
 
-<h1 align="center">Tunnel Mate</h1>
+Tunnel Mate 是一款使用 Rust + GPUI 构建的原生跨平台 SSH 隧道管理器。紧凑的主界面专注于隧道状态和一键启停，编辑与诊断直接放在每条隧道上，低频选项统一收进“高级设置”。
 
-<p align="center">
-  <strong>一个轻量、优雅且安全的跨平台 SSH 隧道与端口转发 GUI 管理工具。</strong>
-</p>
+[English](README.md)
 
-<p align="center">
-  <a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a>
-</p>
+## 主要功能
 
----
+- 本地转发（`-L`）、远程转发（`-R`）和 SOCKS5（`-D`）
+- 原生隧道与分组增删改查，可读取 SSH config 主机
+- 密码只存入操作系统钥匙串，不会写入配置文件或备份
+- 跳板机、主机密钥确认、加密私钥口令和自动重连
+- 系统托盘、隧道随应用启动、登录时启动、最小化启动和关闭到托盘
+- 连接诊断、活动记录、实时日志以及配置备份与恢复
+- 根据操作系统语言自动选择中文或英文界面
 
-Tunnel Mate 基于 Tauri v2 和 React 构建。它会静默运行在您的系统托盘中，并提供高级的连接诊断功能，确保您的安全连接始终处于活跃状态。
+## 使用说明
 
----
+点击“新建隧道”手工创建，或从 `~/.ssh/config` 选择已有主机。本地转发会把远端服务映射到当前电脑；远程转发会通过 SSH 服务器暴露本地服务；SOCKS5 会创建本地动态代理。
 
-## 🌟 核心特性
+SSH 主机和可选跳板机都可以从 SSH config 选择。选择后会填入解析后的主机、端口、用户和私钥，并保留按 SSH 别名匹配当前配置的能力。新建隧道默认开启“应用启动时自动重连”和“断线后自动重连”。
 
-*   **SSH 隧道 GUI 管理**：轻松配置和控制本地转发 (`-L`)、远程转发 (`-R`) 以及动态转发/SOCKS5 (`-D`) 端口隧道。
-*   **系统托盘深度整合**：
-    *   启动时自动最小化到托盘。
-    *   关闭主窗口时应用不在后台退出，而是保持在系统托盘运行。
-    *   在托盘菜单中快速一键切换隧道状态，或者恢复/隐藏主窗口。
-*   **导入本地 SSH 配置**：自动解析并从系统本地的 `~/.ssh/config` 导入已配置的 SSH 主机。
-*   **连接诊断机制**：实时的连接诊断分析器，通过逐步的连接检测（解析 DNS、端口可用性、SSH 密钥认证等）来帮助您即时排查连接问题。
-*   **事件日志记录**：内置全面的会话日志查看器，实时追踪 SSH 连接、断开、超时和重连事件。
-*   **备份与恢复**：支持一键导出和导入隧道配置。
-*   **自动适配状态栏主题**：托盘图标自动根据 macOS 系统状态栏的深色或浅色主题切换颜色（黑/白）。
+每条隧道都有行内“编辑”和“诊断”按钮。运行中的隧道没有实际修改时，保存不会弹出提示；有修改时会先确认，然后断开并按新配置重连。诊断会识别当前正在运行的隧道，不会把它自己监听的端口误报成其他进程占用。
 
----
+备份是不会包含密码的可移植 JSON 文件。导出默认定位到 `~/Downloads`；导入时会先校验备份、停止当前连接、替换配置，并自动启动其中标记为随应用重连的隧道。
 
-## 🛠️ 技术栈
+在 macOS 上，应用提供标准的“应用”和“窗口”菜单，并支持 `Command-,` 打开设置、`Command-W` 关闭窗口、`Command-M` 最小化以及 `Command-Q` 退出。如果开启“关闭到托盘”，关闭窗口只会隐藏界面，隧道继续运行；可通过 Dock 图标或菜单栏图标重新显示。
 
-*   **后端 / 系统封装**：[Tauri v2](https://tauri.app/) (Rust)
-*   **前端框架**：React 19
-*   **开发语言**：TypeScript
-*   **构建工具**：Vite
-*   **样式框架**：Tailwind CSS
-*   **图标库**：Lucide React
+## 项目结构
 
----
+- `apps/tunnel-mate-gpui`：新的主客户端，固定使用同步版本的
+  `gpui-unofficial` 与 `gpui-platform-gpui-unofficial` 1.14.2。
+- `crates/tunnel-core`：完全独立于 UI 的配置、凭据、诊断、SSH、端口转发、事件和隧道生命周期核心。
+- `src-tauri` 与 `src`：迁移期兼容客户端，只调用同一个
+  `tunnel-core`，不再保留重复 SSH 实现。
 
-## 🚀 快速开始
+从旧客户端升级时，会继续使用原来的 `TunnelMate/config.json`、
+`events.jsonl` 和系统钥匙串凭据，无需手工迁移。
 
-### 准备工作
+## 开发与测试
 
-在您的开发机上安装以下依赖：
-1.  **Node.js** (LTS 或更新版本)
-2.  **Rust 工具链** (使用 `rustup` 安装)
-3.  **pnpm** (包管理工具)
-4.  *(仅 Linux)* 系统构建依赖（Webkit2GTK, GTK3, AppIndicator）。请参阅 Tauri 官方 Linux 安装指南。
+安装稳定版 Rust 工具链。Linux 还需要 GTK 3、AppIndicator、XKBCommon、
+Wayland 和 X11 开发库。
 
-### 开发环境配置
-
-1.  克隆本仓库并进入项目根目录。
-2.  安装前端依赖：
-    ```bash
-    pnpm install
-    ```
-3.  以开发模式启动应用：
-    ```bash
-    pnpm tauri dev
-    ```
-
-### 本地打包构建
-
-如需为当前操作系统编译并打包客户端安装包：
 ```bash
-pnpm tauri build
+cargo run -p tunnel-mate-gpui
+cargo check --workspace
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
 ```
-生成的安装包文件将存放在 `src-tauri/target/release/bundle/` 目录下。
 
----
+npm 命令默认指向原生客户端：
 
-## 🍏 macOS 安装说明 (绕过安全警告)
+```bash
+pnpm dev
+pnpm build
+pnpm package:native
+```
 
-由于本应用未支付苹果开发者年费进行官方签名与公证，因此在 macOS 上首次安装（包括通过 Homebrew 安装）并打开时，系统会提示：
-> **“无法验证此 App，因为开发者身份不明”** 或 **“Apple无法验证是否包含可能危害Mac安全或泄漏隐私的恶意软件”**
+打包后的 macOS 应用位于 `target/release/Tunnel Mate.app`；其他平台的安装包路径会随格式不同而变化。
 
-您可以通过以下两种方式轻松绕过该限制：
+兼容前端仍可通过 `pnpm dev:legacy` 与 `pnpm build:legacy` 运行。
 
-#### 方法 1：右键打开（推荐，最快捷）
-1. 打开 **访达 (Finder)**，进入 **应用程序 (Applications)** 文件夹。
-2. 找到 **Tunnel Mate** 图标，**右键点击**（或按住 `Control` 键点击）图标，在菜单中选择 **打开 (Open)**。
-3. 此时弹出的安全警告框中会出现一个 **“打开”** 按钮，点击即可运行。
-4. *注：只需如此操作一次，后续即可双击正常打开。*
+## 打包与发布
 
-#### 方法 2：在系统设置中允许
-1. 尝试双击运行应用，触发安全警告后，点击“取消”或“好”关闭警告框。
-2. 打开 Mac 的 **系统设置 (System Settings)** -> **隐私与安全 (Privacy & Security)**。
-3. 向下滚动到 **安全性 (Security)** 栏目，您会看到提示：*已阻止使用“Tunnel Mate”，因为它不是来自已识别的开发者。*
-4. 点击旁边的 **仍要打开 (Open Anyway)**，输入密码或使用 Touch ID 确认，然后在弹出的确认框中选择 **打开** 即可。
+`pnpm package:native` 会使用 `cargo-packager` 构建当前平台安装包。
+`.github/workflows/gpui.yml` 会检查 macOS、Linux 和 Windows，并在手工运行或推送版本标签时生成 DMG、DEB/AppImage 和 WiX/NSIS 安装包。
 
----
+未签名的 macOS 版本首次启动时，可能需要右键应用并选择“打开”。
 
-## 📦 CI/CD 与自动打包
+## 开源协议
 
-本项目配置了完整的 GitHub Actions 工作流（`.github/workflows/release.yml`），能够自动为三大主流系统平台构建打包：
-
-*   **macOS**：自动编译适用于 Apple Silicon 芯片 (`aarch64-apple-darwin`) 以及 Intel 芯片 (`x86_64-apple-darwin`) 的 macOS 客户端，并打包为 `.dmg` 格式。
-*   **Windows**：生成 `.msi` (WiX) 安装包和 `.exe` (NSIS) 安装程序。
-*   **Linux**：生成 Debian 安装包 (`.deb`) 以及免安装便携的 `.AppImage` 格式。
-
-### 自动化发布机制：
-*   **推送至 `main` 分支**：编译并在 GitHub Actions 运行详情页的 Artifacts 列表中上传安装包，方便日常测试下载。
-*   **推送版本 Tag（例如 `v0.1.0`）**：自动构建全平台客户端并创建 GitHub Release 草稿页，将所有安装包作为版本附件发布。
-
----
-
-## 📄 开源协议
-
-本项目采用 [MIT 协议](LICENSE) 开源。
+[MIT](LICENSE)

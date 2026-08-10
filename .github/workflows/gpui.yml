@@ -1,0 +1,105 @@
+name: "GPUI Build & Release"
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  quality:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: './ -> target'
+      - name: Install Linux native dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libappindicator3-dev libxdo-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libfontconfig1-dev libfreetype6-dev libvulkan-dev patchelf
+      - name: Check workspace
+        run: cargo check --workspace
+      - name: Test workspace
+        run: cargo test --workspace
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  package:
+    needs: quality
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            formats: dmg
+            artifact: target/aarch64-apple-darwin/release/*.dmg
+            name: tunnel-mate-macos-aarch64
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            formats: dmg
+            artifact: target/x86_64-apple-darwin/release/*.dmg
+            name: tunnel-mate-macos-x64
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            formats: deb,appimage
+            artifact: target/x86_64-unknown-linux-gnu/release/*.{deb,AppImage}
+            name: tunnel-mate-linux-x64
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            formats: wix,nsis
+            artifact: target/x86_64-pc-windows-msvc/release/*.{msi,exe}
+            name: tunnel-mate-windows-x64
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: './ -> target'
+      - name: Install Linux native dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libappindicator3-dev libxdo-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libfontconfig1-dev libfreetype6-dev libvulkan-dev patchelf
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --version 0.11.8 --locked
+      - name: Build native client
+        run: cargo build --release -p tunnel-mate-gpui --target ${{ matrix.target }}
+      - name: Package native client
+        run: cargo packager --manifest-path apps/tunnel-mate-gpui/Cargo.toml --release --target ${{ matrix.target }} --formats ${{ matrix.formats }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+
+  release:
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "${{ github.ref_name }}" >/dev/null 2>&1 || gh release create "${{ github.ref_name }}" --generate-notes
+          gh release upload "${{ github.ref_name }}" release-assets/* --clobber

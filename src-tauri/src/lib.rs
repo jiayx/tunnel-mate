@@ -1,18 +1,13 @@
-mod config;
-mod diagnostics;
-mod event_logger;
-mod manager;
-mod ssh;
-mod ssh_config;
-
-use crate::config::{
-    validate_config, AppConfig, ConfigStore, GlobalSettings, Tunnel, TunnelStatus,
+use tunnel_core::config::{
+    export_config_string, import_config_string, validate_config, AppConfig, ConfigStore,
+    GlobalSettings, Tunnel, TunnelStatus,
 };
-use crate::diagnostics::{run_diagnostics, DiagnosticStep};
-use crate::event_logger::{EventLogger, EventType, LogEvent};
-use crate::manager::TunnelManager;
-use crate::ssh::engine::SshSession;
-use crate::ssh_config::{parse_ssh_config, SshHostConfig};
+use tunnel_core::diagnostics::{run_diagnostics, DiagnosticStep};
+use tunnel_core::event_logger::{EventLogger, EventType, LogEvent};
+use tunnel_core::manager::{RuntimeEvent, TunnelManager};
+use tunnel_core::ssh::engine::SshSession;
+use tunnel_core::ssh::tunnel::LogSink;
+use tunnel_core::ssh_config::{parse_ssh_config, SshHostConfig};
 use std::sync::Arc;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -98,7 +93,6 @@ async fn trust_host_key(host: String, port: u16) -> Result<(), String> {
 
 #[tauri::command]
 async fn start_tunnel(
-    app: AppHandle,
     state: State<'_, TunnelState>,
     tunnel_id: String,
     passphrase: Option<String>,
@@ -112,17 +106,19 @@ async fn start_tunnel(
         .ok_or_else(|| format!("Tunnel with ID {} not found", tunnel_id))?
         .clone();
 
-    TunnelManager::start_tunnel(state.0.clone(), app, tunnel, passphrase, log_channel).await
+    let log_sink = LogSink::callback(move |message| {
+        let _ = log_channel.send(message);
+    });
+    TunnelManager::start_tunnel(state.0.clone(), tunnel, passphrase, log_sink).await
 }
 
 #[tauri::command]
 async fn stop_tunnel(
-    app: AppHandle,
     state: State<'_, TunnelState>,
     tunnel_id: String,
 ) -> Result<(), String> {
     let mut manager = state.0.lock().await;
-    manager.stop_tunnel(&app, &tunnel_id).await
+    manager.stop_tunnel(&tunnel_id).await
 }
 
 #[tauri::command]
@@ -146,17 +142,13 @@ async fn get_tunnel_status(
 fn export_config() -> Result<String, String> {
     let store = ConfigStore::new();
     let config = store.load_config()?;
-    serde_json::to_string_pretty(&config)
-        .map_err(|e| format!("Failed to serialize config for export: {}", e))
+    export_config_string(&config)
 }
 
 #[tauri::command]
 fn import_config(app: AppHandle, config_str: String) -> Result<(), String> {
     let store = ConfigStore::new();
-    let new_config: AppConfig = serde_json::from_str(&config_str)
-        .map_err(|e| format!("Invalid configuration format: {}", e))?;
-
-    validate_config(&new_config)?;
+    let new_config = import_config_string(&config_str)?;
 
     store.save_config(&new_config)?;
 
@@ -304,6 +296,19 @@ pub fn run() {
             import_config
         ])
         .setup(move |app| {
+            let event_app = app.handle().clone();
+            manager_state.blocking_lock().set_event_sink(Arc::new(move |event| {
+                match event {
+                    RuntimeEvent::Status(payload) => {
+                        let _ = event_app.emit("tunnel-status-changed", payload);
+                    }
+                    RuntimeEvent::Activity(event) => {
+                        let _ = event_app.emit("activity-event-created", event);
+                    }
+                }
+                update_tray_menu(&event_app);
+            }));
+
             let mut tray_builder = TrayIconBuilder::with_id("main-tray");
             let icon_path = app.path().resolve(
                 "icons/trayTemplate.png",
@@ -351,7 +356,6 @@ pub fn run() {
             // Build initial tray menu
             update_tray_menu(app.handle());
 
-            let app_handle = app.handle().clone();
             let auto_start_manager = manager_state.clone();
             tauri::async_runtime::spawn(async move {
                 let store = ConfigStore::new();
@@ -367,7 +371,6 @@ pub fn run() {
                 {
                     let _ = TunnelManager::start_tunnel_silent(
                         auto_start_manager.clone(),
-                        app_handle.clone(),
                         tunnel,
                     )
                     .await;

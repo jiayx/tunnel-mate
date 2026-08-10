@@ -1,5 +1,6 @@
 use keyring::{Entry, Error as KeyringError};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -56,7 +57,7 @@ impl ForwardSpec {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Tunnel {
     pub id: String,
@@ -144,17 +145,49 @@ pub fn validate_config(config: &AppConfig) -> Result<(), String> {
         ));
     }
 
+    let mut group_ids = HashSet::new();
+    for group in &config.groups {
+        if group.id.trim().is_empty() || !group_ids.insert(group.id.as_str()) {
+            return Err("Group IDs must be non-empty and unique".to_string());
+        }
+        if group.name.trim().is_empty() {
+            return Err("Group name is required".to_string());
+        }
+    }
+
+    let mut tunnel_ids = HashSet::new();
     for tunnel in &config.tunnels {
+        if tunnel.id.trim().is_empty() || !tunnel_ids.insert(tunnel.id.as_str()) {
+            return Err("Tunnel IDs must be non-empty and unique".to_string());
+        }
         validate_tunnel(tunnel)?;
+        if let Some(group_id) = tunnel.group_id.as_deref() {
+            if !group_ids.contains(group_id) {
+                return Err(format!(
+                    "Tunnel '{}' group reference is invalid",
+                    tunnel.name
+                ));
+            }
+        }
     }
 
     for tunnel in &config.tunnels {
         if let Some(jump_host_id) = tunnel.jump_host_id.as_deref() {
             if jump_host_id == tunnel.id {
-                return Err(format!("Tunnel '{}' cannot use itself as a jump host", tunnel.name));
+                return Err(format!(
+                    "Tunnel '{}' cannot use itself as a jump host",
+                    tunnel.name
+                ));
             }
-            if !config.tunnels.iter().any(|candidate| candidate.id == jump_host_id) {
-                return Err(format!("Tunnel '{}' jump host reference is invalid", tunnel.name));
+            if !config
+                .tunnels
+                .iter()
+                .any(|candidate| candidate.id == jump_host_id)
+            {
+                return Err(format!(
+                    "Tunnel '{}' jump host reference is invalid",
+                    tunnel.name
+                ));
             }
         }
     }
@@ -203,11 +236,11 @@ pub fn validate_tunnel(tunnel: &Tunnel) -> Result<(), String> {
         }
         if !has_jump_reference
             && tunnel
-            .jump_user
-            .as_deref()
-            .unwrap_or_default()
-            .trim()
-            .is_empty()
+                .jump_user
+                .as_deref()
+                .unwrap_or_default()
+                .trim()
+                .is_empty()
         {
             return Err(format!("Tunnel '{}' jump user is required", tunnel.name));
         }
@@ -226,17 +259,51 @@ pub fn validate_endpoint(endpoint: &Endpoint, label: &str) -> Result<(), String>
     Ok(())
 }
 
+/// Serialize a portable configuration backup. Password fields are excluded by
+/// the model's serde attributes and remain in the operating-system keyring.
+pub fn export_config_string(config: &AppConfig) -> Result<String, String> {
+    validate_config(config)?;
+    serde_json::to_string_pretty(config)
+        .map_err(|e| format!("Failed to serialize config for export: {}", e))
+}
+
+/// Parse and validate a portable configuration backup without writing it.
+/// Persisted password fields are rejected instead of silently accepting
+/// plaintext secrets.
+pub fn import_config_string(content: &str) -> Result<AppConfig, String> {
+    reject_persisted_secrets(content)?;
+    let config: AppConfig = serde_json::from_str(content)
+        .map_err(|e| format!("Failed to parse imported config: {}", e))?;
+    validate_config(&config)?;
+    Ok(config)
+}
+
 pub struct ConfigStore {
     base_path: PathBuf,
+}
+
+impl Default for ConfigStore {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 const KEYRING_SERVICE: &str = "com.jiayx.tunnel-mate";
 
 impl ConfigStore {
     pub fn new() -> Self {
+        if let Some(path) = std::env::var_os("TUNNEL_MATE_CONFIG_DIR") {
+            return Self {
+                base_path: PathBuf::from(path),
+            };
+        }
         let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
         path.push("TunnelMate");
         Self { base_path: path }
+    }
+
+    pub fn from_base_path(base_path: PathBuf) -> Self {
+        Self { base_path }
     }
 
     pub fn get_config_path(&self) -> PathBuf {
@@ -490,5 +557,63 @@ mod tests {
         assert!(validate_endpoint(&endpoint, "listen endpoint")
             .unwrap_err()
             .contains("port is invalid"));
+    }
+
+    #[test]
+    fn portable_backup_round_trips_without_passwords() {
+        let mut tunnel = test_tunnel(ForwardSpec::Socks5 {
+            listen: test_endpoint("127.0.0.1", 1080),
+        });
+        tunnel.ssh_password = Some("never-export-me".to_string());
+        let config = AppConfig {
+            version: CONFIG_VERSION,
+            groups: Vec::new(),
+            tunnels: vec![tunnel],
+            settings: GlobalSettings::default(),
+        };
+
+        let backup = export_config_string(&config).unwrap();
+        assert!(!backup.contains("never-export-me"));
+        assert_eq!(import_config_string(&backup).unwrap().tunnels.len(), 1);
+    }
+
+    #[test]
+    fn imported_backup_rejects_plaintext_password_fields() {
+        let backup = r#"{"version":1,"groups":[],"tunnels":[{"sshPassword":"bad"}],"settings":{}}"#;
+        assert!(import_config_string(backup)
+            .unwrap_err()
+            .contains("must not contain persisted SSH passwords"));
+    }
+
+    #[test]
+    fn rejects_dangling_group_reference() {
+        let mut tunnel = test_tunnel(ForwardSpec::Socks5 {
+            listen: test_endpoint("127.0.0.1", 1080),
+        });
+        tunnel.group_id = Some("missing".into());
+        let config = AppConfig {
+            tunnels: vec![tunnel],
+            ..AppConfig::default()
+        };
+
+        assert!(validate_config(&config)
+            .unwrap_err()
+            .contains("group reference is invalid"));
+    }
+
+    #[test]
+    fn isolated_store_atomically_round_trips_default_config() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = ConfigStore::from_base_path(directory.path().to_path_buf());
+        let config = AppConfig::default();
+
+        store.save_config(&config).unwrap();
+        let loaded = store.load_config().unwrap();
+
+        assert_eq!(loaded.version, CONFIG_VERSION);
+        assert_eq!(loaded.settings, GlobalSettings::default());
+        assert!(loaded.tunnels.is_empty());
+        assert!(store.get_config_path().exists());
+        assert!(!store.get_config_path().with_extension("tmp").exists());
     }
 }
