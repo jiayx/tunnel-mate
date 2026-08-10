@@ -42,10 +42,9 @@ pub fn build_tray(
 ) -> Result<TrayIcon, String> {
     let menu = build_tray_menu(tunnels, statuses, chinese)?;
 
-    let decoded = image::load_from_memory(include_bytes!(
-        "../../../src-tauri/icons/trayTemplate@2x.png"
-    ))
-    .map_err(|error| format!("读取托盘图标失败：{error}"))?;
+    let decoded =
+        image::load_from_memory(include_bytes!("../../../assets/icons/trayTemplate@2x.png"))
+            .map_err(|error| format!("读取托盘图标失败：{error}"))?;
     let (width, height) = decoded.dimensions();
     let icon = Icon::from_rgba(decoded.into_rgba8().into_raw(), width, height)
         .map_err(|error| format!("创建托盘图标失败：{error}"))?;

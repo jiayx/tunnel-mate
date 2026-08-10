@@ -3,7 +3,6 @@ members = [
   "apps/tunnel-mate-gpui",
   "crates/tunnel-core",
 ]
-exclude = ["src-tauri"]
 resolver = "2"
 
 [workspace.package]

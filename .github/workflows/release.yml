@@ -1,6 +1,11 @@
-name: "Build & Release Client"
+name: "GPUI Build & Release"
 
 on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -8,233 +13,93 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [ubuntu-22.04, windows-latest]
+        platform: [macos-latest, ubuntu-22.04, windows-latest]
     runs-on: ${{ matrix.platform }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v6
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
         with:
-          version: 9
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: lts/*
-          cache: 'pnpm'
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: './src-tauri -> target'
-
-      - name: Install system dependencies (Ubuntu only)
+          workspaces: './ -> target'
+      - name: Install Linux native dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libgtk-3-dev libappindicator3-dev libxdo-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libfontconfig1-dev libfreetype6-dev libvulkan-dev patchelf
+      - name: Check workspace
+        run: cargo check --workspace
+      - name: Test workspace
+        run: cargo test --workspace
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Install dependencies
-        run: pnpm install
-
-      - name: Typecheck frontend
-        run: pnpm typecheck
-
-      - name: Test Rust backend
-        run: pnpm test:rust
-
-      - name: Lint Rust backend
-        if: matrix.platform == 'ubuntu-22.04'
-        run: pnpm clippy
-
-  build-tauri:
+  package:
     needs: quality
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-    permissions:
-      contents: write
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: "macos-latest" # Builds for Apple Silicon (macOS)
-            target: "aarch64-apple-darwin"
-            args: "--target aarch64-apple-darwin --bundles dmg"
-            primary_artifact_suffix: "macos_aarch64.dmg"
-            primary_artifact_path: "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg"
-            extra_artifact_suffix: ""
-            extra_artifact_path: ""
-          - platform: "macos-latest" # Builds for Intel CPUs (macOS) via cross-compilation
-            target: "x86_64-apple-darwin"
-            args: "--target x86_64-apple-darwin --bundles dmg"
-            primary_artifact_suffix: "macos_x64.dmg"
-            primary_artifact_path: "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg"
-            extra_artifact_suffix: ""
-            extra_artifact_path: ""
-          - platform: "ubuntu-22.04" # Builds for Linux (.deb, .AppImage)
-            target: ""
-            args: "--bundles deb,appimage"
-            primary_artifact_suffix: "linux_amd64.deb"
-            primary_artifact_path: "src-tauri/target/release/bundle/deb/*.deb"
-            extra_artifact_suffix: "linux_amd64.AppImage"
-            extra_artifact_path: "src-tauri/target/release/bundle/appimage/*.AppImage"
-          - platform: "windows-latest" # Builds for Windows (.msi, .exe)
-            target: ""
-            args: "--bundles msi,nsis"
-            primary_artifact_suffix: "windows_x64.msi"
-            primary_artifact_path: "src-tauri/target/release/bundle/msi/*.msi"
-            extra_artifact_suffix: "windows_x64-setup.exe"
-            extra_artifact_path: "src-tauri/target/release/bundle/nsis/*.exe"
-
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            formats: dmg
+            artifact: target/aarch64-apple-darwin/release/*.dmg
+            name: tunnel-mate-macos-aarch64
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            formats: dmg
+            artifact: target/x86_64-apple-darwin/release/*.dmg
+            name: tunnel-mate-macos-x64
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            formats: deb,appimage
+            artifact: target/x86_64-unknown-linux-gnu/release/*.{deb,AppImage}
+            name: tunnel-mate-linux-x64
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            formats: wix,nsis
+            artifact: target/x86_64-pc-windows-msvc/release/*.{msi,exe}
+            name: tunnel-mate-windows-x64
     runs-on: ${{ matrix.platform }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v6
-        with:
-          version: 9
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: lts/*
-          cache: 'pnpm'
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: './src-tauri -> target'
-
-      - name: Install system dependencies (Ubuntu only)
+          workspaces: './ -> target'
+      - name: Install Linux native dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
-      - name: Install dependencies
-        run: pnpm install
-
-      - name: Build Tauri App
-        id: build_tauri
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          sudo apt-get install -y libgtk-3-dev libappindicator3-dev libxdo-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libfontconfig1-dev libfreetype6-dev libvulkan-dev patchelf
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --version 0.11.8 --locked
+      - name: Build native client
+        run: cargo build --release -p tunnel-mate-gpui --target ${{ matrix.target }}
+      - name: Package native client
+        run: cargo packager --manifest-path apps/tunnel-mate-gpui/Cargo.toml --release --target ${{ matrix.target }} --formats ${{ matrix.formats }}
+      - uses: actions/upload-artifact@v7
         with:
-          # Publish a GitHub Release for the pushed version tag (e.g. v0.1.0)
-          tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
-          releaseName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
-          releaseDraft: false
-          prerelease: false
-          assetNamePattern: "[name]_[version]_[platform]_[arch][setup][ext]"
-          args: ${{ matrix.args }}
+          name: ${{ matrix.name }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
 
-      - name: Upload Primary Build Artifact (for branch testing)
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: Tunnel.Mate_${{ steps.build_tauri.outputs.appVersion }}_${{ matrix.primary_artifact_suffix }}
-          path: ${{ matrix.primary_artifact_path }}
-          archive: false
-          if-no-files-found: warn
-
-      - name: Upload Additional Build Artifact (for branch testing)
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') && matrix.extra_artifact_path != '' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: Tunnel.Mate_${{ steps.build_tauri.outputs.appVersion }}_${{ matrix.extra_artifact_suffix }}
-          path: ${{ matrix.extra_artifact_path }}
-          archive: false
-          if-no-files-found: warn
-
-  update-brew:
-    needs: build-tauri
-    runs-on: ubuntu-latest
+  release:
+    needs: package
     if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - name: Download release assets
+      - uses: actions/download-artifact@v8
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Publish release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-          # Download all dmg files for this release tag
-          gh release download v$VERSION --repo ${{ github.repository }} --pattern "*.dmg" --dir dmg-files
-
-      - name: Calculate SHA256
-        run: |
-          cd dmg-files
-          ARM_FILE=$(ls *aarch64.dmg)
-          X64_FILE=$(ls *x64.dmg)
-
-          ARM_SHA=$(shasum -a 256 "$ARM_FILE" | cut -d' ' -f1)
-          X64_SHA=$(shasum -a 256 "$X64_FILE" | cut -d' ' -f1)
-
-          echo "ARM_SHA=$ARM_SHA" >> $GITHUB_ENV
-          echo "X64_SHA=$X64_SHA" >> $GITHUB_ENV
-          echo "ARM_SHA is $ARM_SHA"
-          echo "X64_SHA is $X64_SHA"
-
-      - name: Checkout Homebrew Tap repo
-        uses: actions/checkout@v6
-        with:
-          repository: jiayx/homebrew-tap
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          path: homebrew-tap
-
-      - name: Update Cask file
-        run: |
-          node -e "
-            const fs = require('fs');
-            const caskFile = 'homebrew-tap/Casks/tunnel-mate.rb';
-            const lines = fs.readFileSync(caskFile, 'utf8').split('\n');
-
-            let inIntel = false;
-            let inArm = false;
-            for (let i = 0; i < lines.length; i++) {
-              if (lines[i].includes('on_intel do')) {
-                inIntel = true;
-                inArm = false;
-              } else if (lines[i].includes('on_arm do')) {
-                inArm = true;
-                inIntel = false;
-              } else if (lines[i].trim() === 'end') {
-                inIntel = false;
-                inArm = false;
-              }
-
-              if (lines[i].includes('version \"')) {
-                lines[i] = lines[i].replace(/version \".*\"/, \`version \"\${process.env.VERSION}\"\`);
-              }
-
-              if (lines[i].includes('sha256 \"')) {
-                if (inIntel) {
-                  lines[i] = lines[i].replace(/sha256 \".*\"/, \`sha256 \"\${process.env.X64_SHA}\"\`);
-                } else if (inArm) {
-                  lines[i] = lines[i].replace(/sha256 \".*\"/, \`sha256 \"\${process.env.ARM_SHA}\"\`);
-                }
-              }
-            }
-
-            fs.writeFileSync(caskFile, lines.join('\n'));
-          "
-
-      - name: Commit and Push Cask updates
-        run: |
-          cd homebrew-tap
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Casks/tunnel-mate.rb
-          git commit -m "chore: bump tunnel-mate to v${{ env.VERSION }}"
-          git push origin main
+          gh release view "${{ github.ref_name }}" >/dev/null 2>&1 || gh release create "${{ github.ref_name }}" --generate-notes
+          gh release upload "${{ github.ref_name }}" release-assets/* --clobber

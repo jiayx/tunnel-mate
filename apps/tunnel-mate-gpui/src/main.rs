@@ -509,10 +509,9 @@ impl TunnelMateApp {
             language.pick("搜索名称、主机或地址", "Search name, host, or address");
         let search = cx.new(|cx| TextInput::new(cx, search_placeholder, ""));
         cx.observe(&search, |_, _, cx| cx.notify()).detach();
-        let mut logo =
-            image::load_from_memory(include_bytes!("../../../src-tauri/icons/128x128.png"))
-                .expect("embedded app icon must be valid")
-                .into_rgba8();
+        let mut logo = image::load_from_memory(include_bytes!("../../../assets/icons/128x128.png"))
+            .expect("embedded app icon must be valid")
+            .into_rgba8();
         for pixel in logo.pixels_mut() {
             pixel.0.swap(0, 2);
         }

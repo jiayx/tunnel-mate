@@ -48,16 +48,23 @@ bar item to show it again.
 
 ## Architecture
 
-- `apps/tunnel-mate-gpui`: primary native desktop application, pinned to the
+- `apps/tunnel-mate-gpui`: native desktop application, pinned to the
   synchronized `gpui-unofficial` and `gpui-platform-gpui-unofficial` 1.14.2
   packages.
 - `crates/tunnel-core`: UI-independent configuration, credential, diagnostics,
   SSH, forwarding, event, and tunnel-lifecycle implementation.
-- `src-tauri` and `src`: temporary compatibility client. It consumes the same
-  `tunnel-core`; no SSH implementation is duplicated there.
+- `assets/icons`: application and tray icons shared by runtime and packaging.
 
-Existing users keep the same `TunnelMate/config.json`, `events.jsonl`, and
-system-keyring credentials when moving from the compatibility client.
+```text
+apps/tunnel-mate-gpui  ──uses──▶  crates/tunnel-core
+          │
+          └── runtime and packaging assets ──▶ assets/icons
+```
+
+The repository is a pure Rust workspace; it does not require a web frontend or
+webview runtime. Tunnel Mate retains the existing `TunnelMate/config.json`,
+`events.jsonl`, and system-keyring credential format, so upgrades do not require
+manual data migration.
 
 ## Development
 
@@ -71,26 +78,19 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-The npm aliases point to the native client:
+## Packaging and releases
 
 ```bash
-pnpm dev
-pnpm build
-pnpm package:native
+cargo install cargo-packager --version 0.11.8 --locked
+cargo build --release -p tunnel-mate-gpui
+cargo packager --manifest-path apps/tunnel-mate-gpui/Cargo.toml --release
 ```
 
 The packaged macOS application is written to
 `target/release/Tunnel Mate.app`; installer paths vary by platform and format.
-
-The compatibility frontend remains available through `pnpm dev:legacy` and
-`pnpm build:legacy`.
-
-## Packaging and releases
-
-`pnpm package:native` builds and packages the current platform with
-`cargo-packager`. The `.github/workflows/gpui.yml` workflow checks macOS,
-Linux, and Windows and produces DMG, DEB/AppImage, and WiX/NSIS artifacts for
-manual or tagged releases.
+The `.github/workflows/release.yml` workflow checks macOS, Linux, and Windows
+and produces DMG, DEB/AppImage, and WiX/NSIS artifacts for manual or tagged
+releases.
 
 Unsigned macOS builds may require right-clicking the app and choosing **Open**
 the first time.

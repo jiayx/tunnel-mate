@@ -28,14 +28,18 @@ SSH 主机和可选跳板机都可以从 SSH config 选择。选择后会填入�
 
 ## 项目结构
 
-- `apps/tunnel-mate-gpui`：新的主客户端，固定使用同步版本的
+- `apps/tunnel-mate-gpui`：原生桌面应用，固定使用同步版本的
   `gpui-unofficial` 与 `gpui-platform-gpui-unofficial` 1.14.2。
 - `crates/tunnel-core`：完全独立于 UI 的配置、凭据、诊断、SSH、端口转发、事件和隧道生命周期核心。
-- `src-tauri` 与 `src`：迁移期兼容客户端，只调用同一个
-  `tunnel-core`，不再保留重复 SSH 实现。
+- `assets/icons`：运行时与打包流程共用的应用及托盘图标。
 
-从旧客户端升级时，会继续使用原来的 `TunnelMate/config.json`、
-`events.jsonl` 和系统钥匙串凭据，无需手工迁移。
+```text
+apps/tunnel-mate-gpui  ──调用──▶  crates/tunnel-core
+          │
+          └── 运行及打包资源 ──▶ assets/icons
+```
+
+仓库现在是纯 Rust workspace，不需要 Web 前端或 WebView 运行时。Tunnel Mate 继续兼容现有的 `TunnelMate/config.json`、`events.jsonl` 和系统钥匙串凭据格式，升级时无需手工迁移数据。
 
 ## 开发与测试
 
@@ -49,22 +53,15 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-npm 命令默认指向原生客户端：
-
-```bash
-pnpm dev
-pnpm build
-pnpm package:native
-```
-
-打包后的 macOS 应用位于 `target/release/Tunnel Mate.app`；其他平台的安装包路径会随格式不同而变化。
-
-兼容前端仍可通过 `pnpm dev:legacy` 与 `pnpm build:legacy` 运行。
-
 ## 打包与发布
 
-`pnpm package:native` 会使用 `cargo-packager` 构建当前平台安装包。
-`.github/workflows/gpui.yml` 会检查 macOS、Linux 和 Windows，并在手工运行或推送版本标签时生成 DMG、DEB/AppImage 和 WiX/NSIS 安装包。
+```bash
+cargo install cargo-packager --version 0.11.8 --locked
+cargo build --release -p tunnel-mate-gpui
+cargo packager --manifest-path apps/tunnel-mate-gpui/Cargo.toml --release
+```
+
+打包后的 macOS 应用位于 `target/release/Tunnel Mate.app`；其他平台的安装包路径会随格式不同而变化。`.github/workflows/release.yml` 会检查 macOS、Linux 和 Windows，并在手工运行或推送版本标签时生成 DMG、DEB/AppImage 和 WiX/NSIS 安装包。
 
 未签名的 macOS 版本首次启动时，可能需要右键应用并选择“打开”。
 
