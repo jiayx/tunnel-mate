@@ -9,10 +9,12 @@ use std::sync::Arc;
 use gpui::{
     actions, anchored, deferred, div, img, point, prelude::*, px, relative, rgb, rgba, size,
     Anchor, AnchoredPositionMode, App, Bounds, ClipboardItem, Context, Entity, FontWeight,
-    IntoElement, KeyBinding, Menu as AppMenu, MenuItem as AppMenuItem, MouseButton, OsAction,
-    PathPromptOptions, RenderImage, Rgba, SharedString, Subscription, SystemMenuType, Task, Window,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowOptions,
+    IntoElement, KeyBinding, MouseButton, PathPromptOptions, RenderImage, Rgba, SharedString,
+    Subscription, Task, Window, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowHandle, WindowOptions,
 };
+#[cfg(target_os = "macos")]
+use gpui::{Menu as AppMenu, MenuItem as AppMenuItem, OsAction, SystemMenuType};
 use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
 use tunnel_core::diagnostics::{run_diagnostics, DiagnosticLanguage, DiagnosticStep};
@@ -135,6 +137,38 @@ impl Language {
         } else {
             en
         }
+    }
+}
+
+fn close_to_tray_description(language: Language) -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        language.pick(
+            "点关闭按钮只隐藏窗口，隧道继续运行；可从 Dock 或菜单栏恢复",
+            "Hide the window without stopping tunnels; restore it from the Dock or menu bar",
+        )
+    }
+    #[cfg(target_os = "windows")]
+    {
+        language.pick(
+            "点关闭按钮只隐藏窗口，隧道继续运行；可从任务栏通知区域恢复",
+            "Hide the window without stopping tunnels; restore it from the notification area",
+        )
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        language.pick(
+            "点关闭按钮只隐藏窗口，隧道继续运行；可从系统托盘或状态区恢复",
+            "Hide the window without stopping tunnels; restore it from the system tray or status area",
+        )
+    }
+}
+
+fn window_content_top_padding() -> gpui::Pixels {
+    if cfg!(target_os = "macos") {
+        px(38.0)
+    } else {
+        px(0.0)
     }
 }
 
@@ -4910,10 +4944,7 @@ impl TunnelMateApp {
                             ))
                             .child(row(
                                 self.language.pick("关闭到托盘", "Close to tray"),
-                                self.language.pick(
-                                    "点关闭按钮只隐藏窗口，隧道继续运行；可从 Dock 或菜单栏恢复",
-                                    "Hide the window without stopping tunnels; restore from Dock or menu bar",
-                                ),
+                                close_to_tray_description(self.language),
                                 form.close_to_tray,
                                 SettingToggle::CloseToTray,
                             ))
@@ -5025,7 +5056,7 @@ impl Render for TunnelMateApp {
             .key_context("TunnelMate")
             .flex()
             .size_full()
-            .pt(px(38.0))
+            .pt(window_content_top_padding())
             .bg(APP_BG)
             .text_color(TEXT)
             .child(self.render_sidebar(cx))
@@ -5070,7 +5101,8 @@ fn parse_host_key_prompt(message: &str) -> Option<(String, u16, String)> {
     (!host.is_empty() && !fingerprint.is_empty()).then_some((host, port, fingerprint))
 }
 
-fn install_native_macos_behavior(cx: &mut App, language: Language) {
+#[cfg(target_os = "macos")]
+fn install_native_behavior(cx: &mut App, language: Language) {
     cx.bind_keys([
         KeyBinding::new("cmd-,", OpenSettings, None),
         KeyBinding::new("cmd-w", CloseWindow, None),
@@ -5140,6 +5172,59 @@ fn install_native_macos_behavior(cx: &mut App, language: Language) {
     ]);
 }
 
+#[cfg(not(target_os = "macos"))]
+fn install_native_behavior(cx: &mut App, _language: Language) {
+    cx.bind_keys([
+        KeyBinding::new("ctrl-,", OpenSettings, None),
+        KeyBinding::new("ctrl-w", CloseWindow, None),
+        KeyBinding::new("ctrl-q", QuitApplication, None),
+        KeyBinding::new("f11", ToggleFullScreen, None),
+    ]);
+}
+
+fn platform_window_options(bounds: Bounds<gpui::Pixels>) -> WindowOptions {
+    let mut options = WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        ..Default::default()
+    };
+
+    #[cfg(target_os = "macos")]
+    {
+        options.window_background = WindowBackgroundAppearance::Blurred;
+        options.titlebar = Some(gpui::TitlebarOptions {
+            title: None,
+            appears_transparent: true,
+            traffic_light_position: Some(point(px(16.0), px(16.0))),
+        });
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        options.window_background = WindowBackgroundAppearance::MicaBackdrop;
+        options.titlebar = Some(gpui::TitlebarOptions {
+            title: Some("Tunnel Mate".into()),
+            appears_transparent: false,
+            traffic_light_position: None,
+        });
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        options.window_background = WindowBackgroundAppearance::Opaque;
+        options.titlebar = Some(gpui::TitlebarOptions {
+            title: Some("Tunnel Mate".into()),
+            appears_transparent: false,
+            traffic_light_position: None,
+        });
+        options.app_id = Some("com.jiayx.tunnel-mate".to_string());
+        options.icon = image::load_from_memory(include_bytes!("../../../assets/icons/128x128.png"))
+            .ok()
+            .map(|image| Arc::new(image.into_rgba8()));
+    }
+
+    options
+}
+
 fn register_global_actions(
     cx: &mut App,
     window_handle: WindowHandle<TunnelMateApp>,
@@ -5205,39 +5290,27 @@ fn main() {
             .map(|display| Bounds::centered_at(display.visible_bounds().center(), window_size))
             .unwrap_or_else(|| Bounds::centered(None, window_size, cx));
         let window_handle = cx
-            .open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    window_background: WindowBackgroundAppearance::Blurred,
-                    titlebar: Some(gpui::TitlebarOptions {
-                        title: None,
-                        appears_transparent: true,
-                        traffic_light_position: Some(point(px(16.0), px(16.0))),
-                    }),
-                    ..Default::default()
-                },
-                |window, cx| {
-                    let app = cx.new(TunnelMateApp::load);
-                    let weak = app.downgrade();
-                    window.on_window_should_close(cx, move |_, cx| {
-                        if let Some(app) = weak.upgrade() {
-                            app.update(cx, |app, cx| app.request_close(cx));
-                        } else {
-                            cx.quit();
-                        }
-                        false
-                    });
-                    app
-                },
-            )
+            .open_window(platform_window_options(bounds), |window, cx| {
+                let app = cx.new(TunnelMateApp::load);
+                let weak = app.downgrade();
+                window.on_window_should_close(cx, move |_, cx| {
+                    if let Some(app) = weak.upgrade() {
+                        app.update(cx, |app, cx| app.request_close(cx));
+                    } else {
+                        cx.quit();
+                    }
+                    false
+                });
+                app
+            })
             .expect("failed to open Tunnel Mate window");
         let app = window_handle
             .entity(cx)
             .expect("failed to access Tunnel Mate root view");
         register_global_actions(cx, window_handle, app);
-        // Tray initialization uses a native menu backend that replaces NSApp's main menu.
-        // Install the application menus afterwards so the standard macOS menus remain intact.
-        install_native_macos_behavior(cx, Language::system());
+        // On macOS tray initialization replaces NSApp's main menu, so native behavior is
+        // installed afterwards. Other platforms only register their conventional shortcuts.
+        install_native_behavior(cx, Language::system());
         let minimized_arg = std::env::args().any(|arg| arg == "--minimized");
         if minimized_arg {
             cx.hide();

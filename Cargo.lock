@@ -7464,7 +7464,7 @@ dependencies = [
 
 [[package]]
 name = "tunnel-core"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "chrono",
  "dirs 6.0.0",
@@ -7480,7 +7480,7 @@ dependencies = [
 
 [[package]]
 name = "tunnel-mate-gpui"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "async-channel",
  "auto-launcher",

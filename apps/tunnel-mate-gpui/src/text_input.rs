@@ -50,12 +50,24 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("right", Right, None),
         KeyBinding::new("shift-left", SelectLeft, None),
         KeyBinding::new("shift-right", SelectRight, None),
+        KeyBinding::new("home", Home, None),
+        KeyBinding::new("end", End, None),
+    ]);
+
+    #[cfg(target_os = "macos")]
+    cx.bind_keys([
         KeyBinding::new("cmd-a", SelectAll, None),
         KeyBinding::new("cmd-v", Paste, None),
         KeyBinding::new("cmd-c", Copy, None),
         KeyBinding::new("cmd-x", Cut, None),
-        KeyBinding::new("home", Home, None),
-        KeyBinding::new("end", End, None),
+    ]);
+
+    #[cfg(not(target_os = "macos"))]
+    cx.bind_keys([
+        KeyBinding::new("ctrl-a", SelectAll, None),
+        KeyBinding::new("ctrl-v", Paste, None),
+        KeyBinding::new("ctrl-c", Copy, None),
+        KeyBinding::new("ctrl-x", Cut, None),
     ]);
 }
 

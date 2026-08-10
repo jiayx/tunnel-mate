@@ -46,6 +46,14 @@ to minimize, and `Command-Q` to quit. If **Close to tray** is enabled, closing
 the window hides it while tunnels continue running; use the Dock icon or menu
 bar item to show it again.
 
+On Windows, the app uses the notification-area icon: left-click restores the
+window and right-click opens tunnel controls. It uses the native title bar,
+Mica where supported, and `Ctrl-,`, `Ctrl-W`, `Ctrl-Q`, plus the standard
+`Ctrl-A/C/V/X` editing shortcuts. Linux uses a native title bar and an
+AppIndicator/status-area menu with an explicit **Open Tunnel Mate** action;
+availability and placement of that icon follow the desktop environment. Linux
+uses the same Ctrl shortcuts and `F11` for full screen.
+
 ## Architecture
 
 - `apps/tunnel-mate-gpui`: native desktop application, pinned to the

@@ -5,6 +5,8 @@ use auto_launcher::AutoLaunchBuilder;
 use image::GenericImageView;
 use tray_icon::menu::{IconMenuItem, Menu, MenuEvent, MenuItem, NativeIcon, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
+#[cfg(target_os = "windows")]
+use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
 use tunnel_core::{Tunnel, TunnelStatus};
 
 pub fn sync_autostart(enabled: bool, start_minimized: bool) -> Result<(), String> {
@@ -32,7 +34,30 @@ pub fn sync_autostart(enabled: bool, start_minimized: bool) -> Result<(), String
 }
 
 pub fn install_tray_event_handler(callback: impl Fn(String) + Send + Sync + 'static) {
-    MenuEvent::set_event_handler(Some(move |event: MenuEvent| callback(event.id.0.clone())));
+    let callback = std::sync::Arc::new(callback);
+    let menu_callback = callback.clone();
+    MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+        menu_callback(event.id.0.clone())
+    }));
+
+    // Windows users expect a normal left click on the notification-area icon to
+    // restore the window. Linux AppIndicator does not emit tray click events, so
+    // its menu keeps an explicit Open action instead.
+    #[cfg(target_os = "windows")]
+    TrayIconEvent::set_event_handler(Some(move |event| match event {
+        TrayIconEvent::Click {
+            id,
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            ..
+        }
+        | TrayIconEvent::DoubleClick {
+            id,
+            button: MouseButton::Left,
+            ..
+        } if id.0 == "main-tray" => callback("show".to_string()),
+        _ => {}
+    }));
 }
 
 pub fn build_tray(
@@ -42,9 +67,13 @@ pub fn build_tray(
 ) -> Result<TrayIcon, String> {
     let menu = build_tray_menu(tunnels, statuses, chinese)?;
 
-    let decoded =
-        image::load_from_memory(include_bytes!("../../../assets/icons/trayTemplate@2x.png"))
-            .map_err(|error| format!("读取托盘图标失败：{error}"))?;
+    #[cfg(target_os = "macos")]
+    let icon_bytes = include_bytes!("../../../assets/icons/trayTemplate@2x.png").as_slice();
+    #[cfg(not(target_os = "macos"))]
+    let icon_bytes = include_bytes!("../../../assets/icons/32x32.png").as_slice();
+
+    let decoded = image::load_from_memory(icon_bytes)
+        .map_err(|error| format!("读取托盘图标失败：{error}"))?;
     let (width, height) = decoded.dimensions();
     let icon = Icon::from_rgba(decoded.into_rgba8().into_raw(), width, height)
         .map_err(|error| format!("创建托盘图标失败：{error}"))?;
@@ -54,7 +83,11 @@ pub fn build_tray(
         .with_icon(icon)
         .with_icon_as_template(cfg!(target_os = "macos"))
         .with_menu(Box::new(menu))
-        .with_menu_on_left_click(true)
+        // macOS opens the status menu from either mouse button. Windows uses
+        // left click to restore and right click for the menu. Linux ignores this
+        // option and follows the desktop's AppIndicator behavior.
+        .with_menu_on_left_click(!cfg!(target_os = "windows"))
+        .with_menu_on_right_click(true)
         .build()
         .map_err(|error| format!("创建托盘图标失败：{error}"))
 }
