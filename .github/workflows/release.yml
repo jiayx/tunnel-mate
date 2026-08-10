@@ -98,11 +98,13 @@ jobs:
             formats: dmg
             artifact: tunnel-mate-macos-arm64
             asset_suffix: darwin_aarch64.dmg
+            expected_arch: arm64
           - os: macos-15-intel
             target: x86_64-apple-darwin
             formats: dmg
             artifact: tunnel-mate-macos-x64
             asset_suffix: darwin_x64.dmg
+            expected_arch: x86_64
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             formats: deb,appimage
@@ -144,6 +146,78 @@ jobs:
             exit 1
           fi
           mv "$source_file" "dist/Tunnel.Mate_${{ needs.version.outputs.value }}_${{ matrix.asset_suffix }}"
+      - name: Verify macOS package
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          dmg="dist/Tunnel.Mate_${{ needs.version.outputs.value }}_${{ matrix.asset_suffix }}"
+          test -s "$dmg"
+          hdiutil verify "$dmg"
+
+          mount_dir="$(mktemp -d)"
+          cleanup() {
+            hdiutil detach "$mount_dir" >/dev/null 2>&1 || true
+            rmdir "$mount_dir" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mount_dir"
+          binary="$mount_dir/Tunnel Mate.app/Contents/MacOS/tunnel-mate-gpui"
+          test -x "$binary"
+          file "$binary" | grep -q '${{ matrix.expected_arch }}'
+          plist="$mount_dir/Tunnel Mate.app/Contents/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")" = "${{ needs.version.outputs.value }}"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")" = "com.jiayx.tunnel-mate"
+      - name: Verify Linux packages
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mapfile -t debs < <(find dist -maxdepth 1 -type f -name '*.deb')
+          mapfile -t appimages < <(find dist -maxdepth 1 -type f -name '*.AppImage')
+          test "${#debs[@]}" -eq 1
+          test "${#appimages[@]}" -eq 1
+
+          deb="${debs[0]}"
+          appimage="${appimages[0]}"
+          test "$(dpkg-deb -f "$deb" Version)" = "${{ needs.version.outputs.value }}"
+          test "$(dpkg-deb -f "$deb" Architecture)" = "amd64"
+          test "$(dpkg-deb -f "$deb" Section)" = "utils"
+          depends="$(dpkg-deb -f "$deb" Depends)"
+          grep -q 'libgtk-3-0' <<<"$depends"
+          grep -q 'libappindicator3-1' <<<"$depends"
+
+          extract_dir="$(mktemp -d)"
+          dpkg-deb --extract "$deb" "$extract_dir"
+          binary="$extract_dir/usr/bin/tunnel-mate-gpui"
+          test -x "$binary"
+          file "$binary" | grep -q 'ELF 64-bit.*x86-64'
+          if ldd "$binary" | grep -q 'not found'; then
+            ldd "$binary"
+            exit 1
+          fi
+          file "$appimage" | grep -q 'ELF 64-bit.*x86-64'
+      - name: Verify Windows packages
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $msi = @(Get-ChildItem dist -Filter *.msi)
+          $installer = @(Get-ChildItem dist -Filter *.exe)
+          if ($msi.Count -ne 1 -or $installer.Count -ne 1) {
+            throw "Expected exactly one MSI and one NSIS installer"
+          }
+
+          $msiMagic = [System.IO.File]::ReadAllBytes($msi[0].FullName)[0..7]
+          if ([BitConverter]::ToString($msiMagic) -ne "D0-CF-11-E0-A1-B1-1A-E1") {
+            throw "MSI does not have a valid Compound File header"
+          }
+
+          $bytes = [System.IO.File]::ReadAllBytes($installer[0].FullName)
+          if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
+            throw "NSIS installer does not have a valid PE header"
+          }
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+          if ([BitConverter]::ToUInt16($bytes, $peOffset + 4) -ne 0x014C) {
+            throw "NSIS bootstrapper is not a valid x86 PE executable"
+          }
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
