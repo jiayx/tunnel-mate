@@ -198,13 +198,32 @@ jobs:
             "configured=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
             Write-Host "Windows signing secrets are absent; producing unsigned installers."
           }
-      - name: Package native client
+      - name: Package native client (macOS, with DMG retry)
+        if: runner.os == 'macOS'
+        shell: bash
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for attempt in 1 2 3; do
+            if cargo packager --manifest-path apps/tunnel-mate-gpui/Cargo.toml --release --target "${{ matrix.target }}" --formats "${{ matrix.formats }}" --out-dir "${{ github.workspace }}/dist" --binaries-dir "${{ github.workspace }}/target/${{ matrix.target }}/release"; then
+              exit 0
+            fi
+
+            if [[ "$attempt" -eq 3 ]]; then
+              echo "macOS packaging failed after $attempt attempts" >&2
+              exit 1
+            fi
+
+            echo "DMG packaging attempt $attempt failed; cleaning partial output before retry."
+            find dist -maxdepth 1 -type f -name '*.dmg' -delete
+            sleep "$((attempt * 5))"
+          done
+      - name: Package native client (Linux and Windows)
+        if: runner.os != 'macOS'
         run: cargo packager --manifest-path apps/tunnel-mate-gpui/Cargo.toml --release --target ${{ matrix.target }} --formats ${{ matrix.formats }} --out-dir "${{ github.workspace }}/dist" --binaries-dir "${{ github.workspace }}/target/${{ matrix.target }}/release"
       - name: Normalize macOS package filename
         if: runner.os == 'macOS'
