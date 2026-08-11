@@ -258,6 +258,24 @@ jobs:
           }
           Rename-Item $msi[0].FullName "tunnel-mate-${{ needs.version.outputs.value }}-${{ matrix.platform }}-${{ matrix.arch }}.msi"
           Rename-Item $installer[0].FullName "tunnel-mate-${{ needs.version.outputs.value }}-${{ matrix.platform }}-${{ matrix.arch }}.exe"
+      - name: Create Windows portable package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+        run: |
+          $binary = "target/${{ matrix.target }}/release/tunnel-mate-gpui.exe"
+          if (-not (Test-Path $binary)) { throw "Windows application binary is missing" }
+
+          if ('${{ steps.windows-signing.outputs.configured }}' -eq 'true') {
+            signtool.exe sign /sha1 $env:WINDOWS_CERTIFICATE_THUMBPRINT /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $binary
+            if ($LASTEXITCODE -ne 0) { throw "Failed to sign Windows portable executable" }
+          }
+
+          $portableDir = Join-Path $env:RUNNER_TEMP "tunnel-mate-portable"
+          New-Item -ItemType Directory -Force $portableDir | Out-Null
+          Copy-Item $binary (Join-Path $portableDir "Tunnel Mate.exe")
+          Compress-Archive -Path (Join-Path $portableDir "Tunnel Mate.exe") -DestinationPath "dist/tunnel-mate-${{ needs.version.outputs.value }}-${{ matrix.platform }}-${{ matrix.arch }}.zip"
       - name: Verify macOS package
         if: runner.os == 'macOS'
         shell: bash
@@ -313,6 +331,7 @@ jobs:
         run: |
           $msi = Get-Item "dist/tunnel-mate-${{ needs.version.outputs.value }}-${{ matrix.platform }}-${{ matrix.arch }}.msi"
           $installer = Get-Item "dist/tunnel-mate-${{ needs.version.outputs.value }}-${{ matrix.platform }}-${{ matrix.arch }}.exe"
+          $portable = Get-Item "dist/tunnel-mate-${{ needs.version.outputs.value }}-${{ matrix.platform }}-${{ matrix.arch }}.zip"
 
           $msiMagic = [System.IO.File]::ReadAllBytes($msi.FullName)[0..7]
           if ([BitConverter]::ToString($msiMagic) -ne "D0-CF-11-E0-A1-B1-1A-E1") {
@@ -327,8 +346,26 @@ jobs:
           if ([BitConverter]::ToUInt16($bytes, $peOffset + 4) -ne 0x014C) {
             throw "NSIS bootstrapper is not a valid x86 PE executable"
           }
+
+          $portableDir = Join-Path $env:RUNNER_TEMP "verify-tunnel-mate-portable"
+          Expand-Archive $portable.FullName $portableDir
+          $portableExe = Get-Item (Join-Path $portableDir "Tunnel Mate.exe")
+          $portableBytes = [System.IO.File]::ReadAllBytes($portableExe.FullName)
+          if ($portableBytes[0] -ne 0x4D -or $portableBytes[1] -ne 0x5A) {
+            throw "Portable app does not have a valid PE header"
+          }
+          $portablePeOffset = [BitConverter]::ToInt32($portableBytes, 0x3C)
+          if ([BitConverter]::ToUInt16($portableBytes, $portablePeOffset + 4) -ne 0x8664) {
+            throw "Portable app is not an x86_64 executable"
+          }
+          if ([BitConverter]::ToUInt16($portableBytes, $portablePeOffset + 24) -ne 0x20B) {
+            throw "Portable app is not a PE32+ executable"
+          }
+          if ([BitConverter]::ToUInt16($portableBytes, $portablePeOffset + 92) -ne 2) {
+            throw "Portable app is not using the Windows GUI subsystem"
+          }
           if ('${{ steps.windows-signing.outputs.configured }}' -eq 'true') {
-            foreach ($package in @($msi, $installer)) {
+            foreach ($package in @($msi, $installer, $portableExe)) {
               $signature = Get-AuthenticodeSignature $package.FullName
               if ($signature.Status -ne 'Valid') {
                 throw "Invalid Authenticode signature for $($package.Name): $($signature.Status)"

@@ -316,7 +316,8 @@ impl TunnelMateApp {
         ) {
             self.trust_prompted_host(cx);
         } else if matches!(self.auth_prompt, Some(AuthPrompt::HostKey { .. })) {
-            self.close_auth_prompt(cx);
+            // Host-key replacement and revoked-key dialogs intentionally have no
+            // destructive default action. The user must click an explicit button.
         } else if matches!(self.auth_prompt, Some(AuthPrompt::Passphrase { .. })) {
             self.submit_passphrase(cx);
         } else if self.diagnostics.is_some() {

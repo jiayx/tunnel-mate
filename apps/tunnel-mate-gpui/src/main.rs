@@ -1,3 +1,8 @@
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
+
 mod i18n;
 mod system;
 mod text_input;
@@ -253,6 +258,8 @@ enum AuthPrompt {
         host: String,
         port: u16,
         fingerprint: String,
+        saved_fingerprints: Vec<String>,
+        confirm_replace: bool,
     },
     Passphrase {
         tunnel_id: String,
@@ -521,7 +528,9 @@ impl Render for TunnelMateApp {
     }
 }
 
-fn parse_host_key_prompt(message: &str) -> Option<(HostKeyIssue, String, u16, String)> {
+fn parse_host_key_prompt(
+    message: &str,
+) -> Option<(HostKeyIssue, String, u16, String, Vec<String>)> {
     let (issue, value) = if let Some(value) = message.strip_prefix("HOST_KEY_NOT_TRUSTED|") {
         (HostKeyIssue::Unknown, value)
     } else if let Some(value) = message.strip_prefix("HOST_KEY_CHANGED|") {
@@ -532,11 +541,24 @@ fn parse_host_key_prompt(message: &str) -> Option<(HostKeyIssue, String, u16, St
             message.strip_prefix("HOST_KEY_REVOKED|")?,
         )
     };
-    let mut parts = value.splitn(3, '|');
+    let mut parts = value.splitn(4, '|');
     let host = parts.next()?.to_string();
     let port = parts.next()?.parse().ok()?;
     let fingerprint = parts.next()?.to_string();
-    (!host.is_empty() && !fingerprint.is_empty()).then_some((issue, host, port, fingerprint))
+    let saved_fingerprints = parts
+        .next()
+        .unwrap_or_default()
+        .split(',')
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect();
+    (!host.is_empty() && !fingerprint.is_empty()).then_some((
+        issue,
+        host,
+        port,
+        fingerprint,
+        saved_fingerprints,
+    ))
 }
 
 #[cfg(target_os = "macos")]
@@ -623,6 +645,7 @@ fn install_native_behavior(cx: &mut App, _language: Language) {
 fn platform_window_options(bounds: Bounds<gpui::Pixels>) -> WindowOptions {
     let mut options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
+        window_min_size: Some(size(px(800.0), px(580.0))),
         ..Default::default()
     };
 
@@ -722,7 +745,7 @@ fn main() {
     application.run(|cx: &mut App| {
         text_input::init(cx);
         cx.set_window_appearance(Some(WindowAppearance::Dark));
-        let window_size = size(px(1050.0), px(680.0));
+        let window_size = size(px(920.0), px(620.0));
         let bounds = cx
             .primary_display()
             .map(|display| Bounds::centered_at(display.visible_bounds().center(), window_size))
@@ -771,8 +794,17 @@ mod tests {
                 HostKeyIssue::Unknown,
                 "example.com".to_string(),
                 2222,
-                "SHA256:abc".to_string()
+                "SHA256:abc".to_string(),
+                vec![]
             ))
+        );
+        assert_eq!(
+            parse_host_key_prompt(
+                "HOST_KEY_CHANGED|example.com|22|SHA256:new|SHA256:old,SHA256:older"
+            )
+            .unwrap()
+            .4,
+            vec!["SHA256:old", "SHA256:older"]
         );
         assert!(parse_host_key_prompt("ordinary error").is_none());
     }

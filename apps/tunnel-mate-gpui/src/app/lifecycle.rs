@@ -149,7 +149,7 @@ impl TunnelMateApp {
                                 )
                             }),
                         });
-                    } else if let Some((issue, host, port, fingerprint)) =
+                    } else if let Some((issue, host, port, fingerprint, saved_fingerprints)) =
                         parse_host_key_prompt(message)
                     {
                         intervention = true;
@@ -159,6 +159,8 @@ impl TunnelMateApp {
                             host,
                             port,
                             fingerprint,
+                            saved_fingerprints,
+                            confirm_replace: false,
                         });
                     }
                 }

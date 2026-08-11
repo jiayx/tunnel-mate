@@ -39,6 +39,9 @@ impl Language {
             "Tunnel operation was cancelled" => "隧道操作已取消".to_string(),
             "Max reconnect attempts reached" => "已达到最大重连次数".to_string(),
             "Session disconnected" => "SSH 会话已断开".to_string(),
+            "The SSH server only supports legacy ssh-rsa (SHA-1). Enable RSA-SHA2 on the server or update its SSH software." => {
+                "SSH 服务器只支持已弃用的 ssh-rsa（SHA-1）。请在服务器启用 RSA-SHA2，或升级 SSH 软件。".to_string()
+            }
             _ if message.starts_with("SSH connection failed:") => {
                 message.replacen("SSH connection failed:", "SSH 连接失败：", 1)
             }
@@ -73,5 +76,8 @@ mod tests {
             Language::En.runtime_message("Session disconnected"),
             "Session disconnected"
         );
+        assert!(Language::Zh
+            .runtime_message("The SSH server only supports legacy ssh-rsa (SHA-1). Enable RSA-SHA2 on the server or update its SSH software.")
+            .starts_with("SSH 服务器只支持"));
     }
 }

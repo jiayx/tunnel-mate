@@ -276,7 +276,7 @@ impl TunnelMateApp {
             .flex_col()
             .gap(px(9.0))
             .w_full()
-            .max_h(px(562.0))
+            .max_h(px(520.0))
             .id("diagnostics-scroll")
             .overflow_y_scroll()
             .p(px(18.0));
@@ -372,7 +372,7 @@ impl TunnelMateApp {
             .child(
                 div()
                     .w(px(600.0))
-                    .max_h(px(620.0))
+                    .max_h(px(540.0))
                     .rounded(px(14.0))
                     .border_1()
                     .border_color(BORDER)
@@ -818,12 +818,21 @@ impl TunnelMateApp {
                 host,
                 port,
                 fingerprint,
+                saved_fingerprints,
+                confirm_replace,
                 ..
-            } => (
-                match issue {
+            } => {
+                let is_confirming = *confirm_replace;
+                (
+                if *confirm_replace {
+                    self.language
+                        .pick("确认更新主机密钥？", "Confirm host key update?")
+                } else {
+                    match issue {
                     HostKeyIssue::Unknown => self.language.pick("信任 SSH 主机密钥", "Trust SSH host key"),
                     HostKeyIssue::Changed => self.language.pick("SSH 主机密钥已变化", "SSH host key changed"),
                     HostKeyIssue::Revoked => self.language.pick("SSH 主机密钥已撤销", "SSH host key revoked"),
+                    }
                 },
                 div()
                     .flex()
@@ -833,23 +842,58 @@ impl TunnelMateApp {
                         div()
                             .text_size(px(11.0))
                             .text_color(MUTED)
-                            .child(match (issue, self.language) {
-                                (HostKeyIssue::Unknown, Language::Zh) => format!("首次连接 {host}:{port}，请核对指纹后再信任。"),
-                                (HostKeyIssue::Unknown, Language::En) => format!("First connection to {host}:{port}. Verify the fingerprint before trusting it."),
-                                (HostKeyIssue::Changed, Language::Zh) => format!("{host}:{port} 的主机密钥与已保存记录不一致。为防止中间人攻击，应用不会自动覆盖；确认服务器确实更换密钥后，请先运行 ssh-keygen -R {host}。"),
-                                (HostKeyIssue::Changed, Language::En) => format!("The key for {host}:{port} differs from the saved key. It will not be overwritten automatically. After independently verifying the change, run ssh-keygen -R {host}."),
-                                (HostKeyIssue::Revoked, Language::Zh) => format!("{host}:{port} 的密钥在 known_hosts 中被标记为已撤销。请联系服务器管理员核实，应用已阻止连接。"),
-                                (HostKeyIssue::Revoked, Language::En) => format!("The key for {host}:{port} is marked as revoked in known_hosts. Contact the server administrator; the connection was blocked."),
+                            .child(match (issue, *confirm_replace, self.language) {
+                                (HostKeyIssue::Unknown, _, Language::Zh) => format!("首次连接 {host}:{port}，请核对指纹后再信任。"),
+                                (HostKeyIssue::Unknown, _, Language::En) => format!("First connection to {host}:{port}. Verify the fingerprint before trusting it."),
+                                (HostKeyIssue::Changed, false, Language::Zh) => format!("{host}:{port} 的主机密钥与已保存记录不一致。请通过可信渠道确认服务器确实更换了密钥，再继续更新。"),
+                                (HostKeyIssue::Changed, false, Language::En) => format!("The key for {host}:{port} differs from the saved key. Independently verify that the server key really changed before updating it."),
+                                (HostKeyIssue::Changed, true, Language::Zh) => "继续会替换 known_hosts 中的旧记录并立即重连。若下面的新指纹未经核实，请取消操作。".to_string(),
+                                (HostKeyIssue::Changed, true, Language::En) => "Continuing replaces the old known_hosts entry and reconnects immediately. Cancel if you have not verified the new fingerprint.".to_string(),
+                                (HostKeyIssue::Revoked, _, Language::Zh) => format!("{host}:{port} 的密钥在 known_hosts 中被标记为已撤销。请联系服务器管理员核实，应用已阻止连接。"),
+                                (HostKeyIssue::Revoked, _, Language::En) => format!("The key for {host}:{port} is marked as revoked in known_hosts. Contact the server administrator; the connection was blocked."),
                             }),
                     )
+                    .when(*issue == HostKeyIssue::Changed && !saved_fingerprints.is_empty(), |column| {
+                        column.child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(5.0))
+                                .child(div().text_size(px(10.0)).text_color(MUTED).child(
+                                    self.language.pick("已保存的指纹", "Saved fingerprint"),
+                                ))
+                                .child(
+                                    div()
+                                        .p(px(10.0))
+                                        .rounded(px(8.0))
+                                        .bg(APP_BG)
+                                        .text_size(px(10.0))
+                                        .text_color(MUTED)
+                                        .child(saved_fingerprints.join("\n")),
+                                ),
+                        )
+                    })
                     .child(
                         div()
-                            .p(px(10.0))
-                            .rounded(px(8.0))
-                            .bg(APP_BG)
-                            .text_size(px(10.0))
-                            .text_color(TEXT)
-                            .child(fingerprint.clone()),
+                            .flex()
+                            .flex_col()
+                            .gap(px(5.0))
+                            .child(div().text_size(px(10.0)).text_color(MUTED).child(
+                                if *issue == HostKeyIssue::Changed {
+                                    self.language.pick("服务器的新指纹", "New server fingerprint")
+                                } else {
+                                    self.language.pick("服务器指纹", "Server fingerprint")
+                                },
+                            ))
+                            .child(
+                                div()
+                                    .p(px(10.0))
+                                    .rounded(px(8.0))
+                                    .bg(APP_BG)
+                                    .text_size(px(10.0))
+                                    .text_color(TEXT)
+                                    .child(fingerprint.clone()),
+                            ),
                     )
                     .child(
                         div()
@@ -857,7 +901,7 @@ impl TunnelMateApp {
                             .flex_wrap()
                             .justify_end()
                             .gap(px(8.0))
-                            .child(
+                            .when(!*confirm_replace, |row| row.child(
                                 div()
                                     .h(px(34.0))
                                     .px(px(12.0))
@@ -873,8 +917,8 @@ impl TunnelMateApp {
                                         cx.listener(|this, _, _, cx| this.copy_prompted_fingerprint(cx)),
                                     )
                                     .child(self.language.pick("复制指纹", "Copy fingerprint")),
-                            )
-                            .when(*issue == HostKeyIssue::Changed, |row| row.child(
+                            ))
+                            .when(*issue == HostKeyIssue::Changed && !*confirm_replace, |row| row.child(
                                 div()
                                     .h(px(34.0))
                                     .px(px(12.0))
@@ -904,9 +948,15 @@ impl TunnelMateApp {
                                     .cursor_pointer()
                                     .on_mouse_up(
                                         MouseButton::Left,
-                                        cx.listener(|this, _, _, cx| this.close_auth_prompt(cx)),
+                                        cx.listener(move |this, _, _, cx| {
+                                            if is_confirming {
+                                                this.cancel_host_key_replacement(cx);
+                                            } else {
+                                                this.close_auth_prompt(cx);
+                                            }
+                                        }),
                                     )
-                                    .child(if *issue == HostKeyIssue::Unknown {
+                                    .child(if *confirm_replace || *issue == HostKeyIssue::Unknown {
                                         self.language.pick("取消", "Cancel")
                                     } else {
                                         self.language.pick("关闭", "Close")
@@ -928,9 +978,42 @@ impl TunnelMateApp {
                                         cx.listener(|this, _, _, cx| this.trust_prompted_host(cx)),
                                     )
                                     .child(self.language.pick("信任并连接", "Trust and connect")),
+                            ))
+                            .when(*issue == HostKeyIssue::Changed && !*confirm_replace, |row| row.child(
+                                div()
+                                    .h(px(34.0))
+                                    .px(px(13.0))
+                                    .flex()
+                                    .items_center()
+                                    .rounded(px(8.0))
+                                    .bg(PRIMARY)
+                                    .text_size(px(11.0))
+                                    .cursor_pointer()
+                                    .on_mouse_up(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| this.begin_host_key_replacement(cx)),
+                                    )
+                                    .child(self.language.pick("更新密钥并连接", "Update key and connect")),
+                            ))
+                            .when(*issue == HostKeyIssue::Changed && *confirm_replace, |row| row.child(
+                                div()
+                                    .h(px(34.0))
+                                    .px(px(13.0))
+                                    .flex()
+                                    .items_center()
+                                    .rounded(px(8.0))
+                                    .bg(color(0xB83A45))
+                                    .text_size(px(11.0))
+                                    .cursor_pointer()
+                                    .on_mouse_up(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| this.replace_prompted_host_key(cx)),
+                                    )
+                                    .child(self.language.pick("确认更新并连接", "Confirm update and connect")),
                             )),
                     ),
-            ),
+                )
+            }
             AuthPrompt::Passphrase { input, .. } => (
                 self.language.pick("输入私钥口令", "Enter private key passphrase"),
                 div()

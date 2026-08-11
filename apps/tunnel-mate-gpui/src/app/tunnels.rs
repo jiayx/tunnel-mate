@@ -434,22 +434,91 @@ impl TunnelMateApp {
             issue: HostKeyIssue::Unknown,
             host,
             port,
+            fingerprint,
             ..
         }) = &self.auth_prompt
         else {
             return;
         };
-        let (tunnel_id, host, port) = (tunnel_id.clone(), host.clone(), *port);
+        let (tunnel_id, host, port, fingerprint) =
+            (tunnel_id.clone(), host.clone(), *port, fingerprint.clone());
+        let error_prefix = self
+            .language
+            .pick("信任主机密钥失败", "Failed to trust host key")
+            .to_string();
         let sender = self.messages.clone();
         self.runtime.spawn(async move {
-            match tunnel_core::ssh::engine::SshSession::trust_host_key(&host, port).await {
+            match tunnel_core::ssh::engine::SshSession::trust_host_key(&host, port, &fingerprint)
+                .await
+            {
                 Ok(()) => {
                     let _ = sender.send(AppMessage::HostTrusted(tunnel_id)).await;
                 }
                 Err(error) => {
                     let _ = sender
                         .send(AppMessage::FileOperation(format!(
-                            "信任主机密钥失败：{error}"
+                            "{error_prefix}: {error}"
+                        )))
+                        .await;
+                }
+            }
+        });
+        cx.notify();
+    }
+
+    pub(super) fn begin_host_key_replacement(&mut self, cx: &mut Context<Self>) {
+        if let Some(AuthPrompt::HostKey {
+            issue: HostKeyIssue::Changed,
+            confirm_replace,
+            ..
+        }) = &mut self.auth_prompt
+        {
+            *confirm_replace = true;
+            cx.notify();
+        }
+    }
+
+    pub(super) fn cancel_host_key_replacement(&mut self, cx: &mut Context<Self>) {
+        if let Some(AuthPrompt::HostKey {
+            confirm_replace, ..
+        }) = &mut self.auth_prompt
+        {
+            *confirm_replace = false;
+            cx.notify();
+        }
+    }
+
+    pub(super) fn replace_prompted_host_key(&mut self, cx: &mut Context<Self>) {
+        let Some(AuthPrompt::HostKey {
+            tunnel_id,
+            issue: HostKeyIssue::Changed,
+            host,
+            port,
+            fingerprint,
+            confirm_replace: true,
+            ..
+        }) = &self.auth_prompt
+        else {
+            return;
+        };
+        let (tunnel_id, host, port, fingerprint) =
+            (tunnel_id.clone(), host.clone(), *port, fingerprint.clone());
+        let error_prefix = self
+            .language
+            .pick("更新主机密钥失败", "Failed to update host key")
+            .to_string();
+        let sender = self.messages.clone();
+        self.runtime.spawn(async move {
+            match tunnel_core::ssh::engine::SshSession::replace_host_key(&host, port, &fingerprint)
+                .await
+            {
+                Ok(()) => {
+                    let _ = sender.send(AppMessage::HostTrusted(tunnel_id)).await;
+                }
+                Err(error) => {
+                    let _ = sender
+                        .send(AppMessage::FileOperation(format!(
+                            "{error_prefix}: {error}"
                         )))
                         .await;
                 }

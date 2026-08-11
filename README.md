@@ -32,9 +32,11 @@ the SSH alias available for matching. New tunnels enable **Reconnect when the
 app starts** and **Automatic reconnect** by default.
 
 On first contact, Tunnel Mate shows the server fingerprint and offers **Trust
-and connect**. A changed key is never overwritten with one click: verify the
-new fingerprint independently, copy the provided `ssh-keygen -R` command, and
-connect again. Keys marked as revoked are blocked without an in-app bypass.
+and connect**. For a changed key, it shows the saved and newly received
+fingerprints side by side. After independent verification, **Update key and
+connect** uses a second confirmation, replaces only the matching `known_hosts`
+entry, verifies that the server still presents the displayed fingerprint, and
+reconnects. Keys marked as revoked remain blocked without an in-app bypass.
 
 Use the inline **Edit** and **Diagnose** actions on a tunnel. Saving an unchanged
 running tunnel does nothing; saving actual changes asks for confirmation before
@@ -56,7 +58,8 @@ dialog action, and `Escape` to close the topmost dialog.
 
 On Windows, the app uses the notification-area icon: left-click restores the
 window and right-click opens tunnel controls. It uses the native title bar,
-Mica where supported, and `Ctrl-,`, `Ctrl-W`, `Ctrl-Q`, plus the standard
+Mica where supported, opens without a companion console window, and supports
+`Ctrl-,`, `Ctrl-W`, `Ctrl-Q`, plus the standard
 `Ctrl-A/C/V/X` editing shortcuts. Linux uses a native title bar and an
 AppIndicator/status-area menu with an explicit **Open Tunnel Mate** action;
 availability and placement of that icon follow the desktop environment. Linux
@@ -132,8 +135,9 @@ compile, test, or package the app locally; checks and release builds run after
 the tag is pushed. Pass `--yes` to skip the final confirmation.
 
 The `.github/workflows/release.yml` workflow checks macOS, Linux, and Windows
-and produces DMG, DEB/AppImage, and WiX/NSIS artifacts for manual or tagged
-releases. Tagged releases include `SHA256SUMS` and GitHub build-provenance
+and produces DMG, DEB/AppImage, and Windows WiX/NSIS installers. Windows also
+gets a portable ZIP containing `Tunnel Mate.exe`, which can run without
+installation. Tagged releases include `SHA256SUMS` and GitHub build-provenance
 attestations. The workflow automatically uses Apple Developer ID/notarization
 and Windows Authenticode credentials when their repository secrets are
 configured; otherwise it explicitly produces unsigned packages.

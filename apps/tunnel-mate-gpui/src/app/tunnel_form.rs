@@ -279,7 +279,7 @@ impl TunnelMateApp {
                     .flex()
                     .flex_col()
                     .w(px(620.0))
-                    .max_h(px(610.0))
+                    .max_h(px(540.0))
                     .rounded(px(14.0))
                     .border_1()
                     .border_color(BORDER)

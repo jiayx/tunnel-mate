@@ -35,6 +35,7 @@ pub struct TunnelClient {
     port: u16,
     known_hosts_policy: KnownHostsPolicy,
     host_key_error: Arc<StdMutex<Option<String>>>,
+    expected_fingerprint: Option<String>,
 }
 
 impl TunnelClient {
@@ -44,6 +45,7 @@ impl TunnelClient {
         port: u16,
         known_hosts_policy: KnownHostsPolicy,
         host_key_error: Arc<StdMutex<Option<String>>>,
+        expected_fingerprint: Option<String>,
     ) -> Self {
         Self {
             forwarded_tx,
@@ -51,6 +53,7 @@ impl TunnelClient {
             port,
             known_hosts_policy,
             host_key_error,
+            expected_fingerprint,
         }
     }
 }
@@ -62,6 +65,17 @@ impl client::Handler for TunnelClient {
         &mut self,
         server_public_key: &ssh_key::PublicKey,
     ) -> Result<bool, Self::Error> {
+        let actual_fingerprint = server_public_key
+            .fingerprint(ssh_key::HashAlg::Sha256)
+            .to_string();
+        if let Some(expected) = &self.expected_fingerprint {
+            if expected != &actual_fingerprint {
+                self.set_host_key_error(format!(
+                    "The SSH host key changed again while confirming it (expected {expected}, received {actual_fingerprint}). Connection blocked."
+                ));
+                return Ok(false);
+            }
+        }
         match self.known_hosts_policy {
             KnownHostsPolicy::TrustOnce => Ok(true),
             KnownHostsPolicy::TrustAndRemember => {
@@ -233,6 +247,7 @@ impl SshSession {
             port,
             known_hosts_policy,
             host_key_error.clone(),
+            None,
         );
 
         let (mut handle, bastion) = if let Some(jump) = jump_host_config {
@@ -303,18 +318,24 @@ impl SshSession {
         })
     }
 
-    pub async fn trust_host_key(host: &str, port: u16) -> Result<(), String> {
+    pub async fn trust_host_key(
+        host: &str,
+        port: u16,
+        expected_fingerprint: &str,
+    ) -> Result<(), String> {
         let config = Arc::new(Config {
             nodelay: true,
             ..Default::default()
         });
         let (forwarded_tx, _) = mpsc::unbounded_channel();
+        let host_key_error = Arc::new(StdMutex::new(None));
         let handler = TunnelClient::new(
             forwarded_tx,
             host.to_string(),
             port,
             KnownHostsPolicy::TrustAndRemember,
-            Arc::new(StdMutex::new(None)),
+            host_key_error.clone(),
+            Some(expected_fingerprint.to_string()),
         );
         let timeout_secs = ConfigStore::new()
             .load_config()
@@ -327,10 +348,41 @@ impl SshSession {
         )
         .await
         .map_err(|_| format!("Timed out while reading host key from {}:{}", host, port))?
-        .map_err(|e| format!("Failed to trust host key: {}", e))?;
+        .map_err(|e| {
+            host_key_error
+                .lock()
+                .ok()
+                .and_then(|error| error.clone())
+                .unwrap_or_else(|| format!("Failed to trust host key: {e}"))
+        })?;
         let _ = handle
             .disconnect(Disconnect::ByApplication, "Host key trusted", "en")
             .await;
+        Ok(())
+    }
+
+    pub async fn replace_host_key(
+        host: &str,
+        port: u16,
+        expected_fingerprint: &str,
+    ) -> Result<(), String> {
+        let path = known_hosts_path().ok_or_else(|| "No home directory found".to_string())?;
+        let original =
+            fs::read_to_string(&path).map_err(|e| format!("Failed to read known_hosts: {e}"))?;
+        let filtered = remove_known_host_entries(&original, host, port);
+        if filtered == original {
+            return Err("No saved host key was found to replace".to_string());
+        }
+        fs::write(&path, &filtered).map_err(|e| format!("Failed to update known_hosts: {e}"))?;
+
+        if let Err(error) = Self::trust_host_key(host, port, expected_fingerprint).await {
+            if let Err(restore_error) = fs::write(&path, original) {
+                return Err(format!(
+                    "{error}; restoring the previous known_hosts file also failed: {restore_error}"
+                ));
+            }
+            return Err(error);
+        }
         Ok(())
     }
 
@@ -391,13 +443,60 @@ fn host_key_error(
     port: u16,
     server_public_key: &ssh_key::PublicKey,
 ) -> String {
+    let saved_fingerprints = known_host_fingerprints(host, port).join(",");
     format!(
-        "{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}",
         kind,
         host,
         port,
-        server_public_key.fingerprint(ssh_key::HashAlg::Sha256)
+        server_public_key.fingerprint(ssh_key::HashAlg::Sha256),
+        saved_fingerprints
     )
+}
+
+fn known_host_fingerprints(host: &str, port: u16) -> Vec<String> {
+    let Some(path) = known_hosts_path() else {
+        return Vec::new();
+    };
+    let Ok(content) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let host_names = known_host_names(host, port);
+    let mut fingerprints = Vec::new();
+    for entry in KnownHosts::new(&content).filter_map(Result::ok) {
+        if entry.marker() == Some(&Marker::CertAuthority)
+            || !known_host_patterns_match(entry.host_patterns(), &host_names)
+        {
+            continue;
+        }
+        let fingerprint = entry
+            .public_key()
+            .fingerprint(ssh_key::HashAlg::Sha256)
+            .to_string();
+        if !fingerprints.contains(&fingerprint) {
+            fingerprints.push(fingerprint);
+        }
+    }
+    fingerprints
+}
+
+fn remove_known_host_entries(content: &str, host: &str, port: u16) -> String {
+    let host_names = known_host_names(host, port);
+    let mut retained = Vec::new();
+    for line in content.lines() {
+        let remove = KnownHosts::new(line).filter_map(Result::ok).any(|entry| {
+            entry.marker() != Some(&Marker::CertAuthority)
+                && known_host_patterns_match(entry.host_patterns(), &host_names)
+        });
+        if !remove {
+            retained.push(line);
+        }
+    }
+    let mut result = retained.join("\n");
+    if content.ends_with('\n') && !result.is_empty() {
+        result.push('\n');
+    }
+    result
 }
 
 fn check_known_host_key(
@@ -564,11 +663,11 @@ async fn authenticate_handle(
         return Ok(());
     }
 
-    if try_agent_auth(handle, user).await? {
-        return Ok(());
-    }
-
-    let mut last_key_error = None;
+    let mut last_key_error = match try_agent_auth(handle, user).await {
+        Ok(true) => return Ok(()),
+        Ok(false) => None,
+        Err(error) => Some(error),
+    };
     for key_path in default_key_candidates().into_iter().filter_map(|key_path| {
         if !key_path.exists() {
             return None;
@@ -642,11 +741,11 @@ async fn authenticate_key_file(
         }
     })?;
 
-    let hash_alg = handle
-        .best_supported_rsa_hash()
-        .await
-        .map_err(|e| format!("Failed to negotiate RSA signature algorithm: {}", e))?
-        .flatten();
+    let hash_alg = if key.algorithm().is_rsa() {
+        negotiate_rsa_hash(handle).await?
+    } else {
+        None
+    };
     let auth = handle
         .authenticate_publickey(user, PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg))
         .await
@@ -705,14 +804,29 @@ where
         Err(_) => return Ok(false),
     };
 
-    let hash_alg = handle
-        .best_supported_rsa_hash()
-        .await
-        .map_err(|e| format!("Failed to negotiate RSA signature algorithm: {}", e))?
-        .flatten();
+    let rsa_hash = if identities
+        .iter()
+        .any(|identity| identity.public_key().algorithm().is_rsa())
+    {
+        Some(negotiate_rsa_hash(handle).await)
+    } else {
+        None
+    };
+    let mut rsa_error = None;
 
     for identity in identities {
         let public_key = identity.public_key().into_owned();
+        let hash_alg = if public_key.algorithm().is_rsa() {
+            match rsa_hash.as_ref().expect("RSA identities negotiated a hash") {
+                Ok(hash) => *hash,
+                Err(error) => {
+                    rsa_error = Some(error.clone());
+                    continue;
+                }
+            }
+        } else {
+            None
+        };
         match handle
             .authenticate_publickey_with(user, public_key, hash_alg, &mut agent)
             .await
@@ -723,7 +837,33 @@ where
         }
     }
 
-    Ok(false)
+    match rsa_error {
+        Some(error) => Err(error),
+        None => Ok(false),
+    }
+}
+
+async fn negotiate_rsa_hash(handle: &mut SshHandle) -> Result<Option<ssh_key::HashAlg>, String> {
+    let advertised = handle
+        .best_supported_rsa_hash()
+        .await
+        .map_err(|e| format!("Failed to negotiate RSA signature algorithm: {e}"))?;
+    select_rsa_hash(advertised).map_err(str::to_string)
+}
+
+fn select_rsa_hash(
+    advertised: Option<Option<ssh_key::HashAlg>>,
+) -> Result<Option<ssh_key::HashAlg>, &'static str> {
+    match advertised {
+        Some(Some(hash)) => Ok(Some(hash)),
+        // RFC 8308 explicitly tells us this server only accepts the deprecated
+        // SHA-1 signature. Do not silently downgrade authentication security.
+        Some(None) => Err(
+            "The SSH server only supports legacy ssh-rsa (SHA-1). Enable RSA-SHA2 on the server or update its SSH software.",
+        ),
+        // Older servers may support RFC 8332 without advertising server-sig-algs.
+        None => Ok(Some(ssh_key::HashAlg::Sha256)),
+    }
 }
 
 pub fn default_key_candidates() -> Vec<PathBuf> {
@@ -767,6 +907,19 @@ mod tests {
     }
 
     #[test]
+    fn rsa_auth_prefers_sha2_without_legacy_sha1_fallback() {
+        assert_eq!(
+            select_rsa_hash(Some(Some(ssh_key::HashAlg::Sha512))).unwrap(),
+            Some(ssh_key::HashAlg::Sha512)
+        );
+        assert_eq!(
+            select_rsa_hash(None).unwrap(),
+            Some(ssh_key::HashAlg::Sha256)
+        );
+        assert!(select_rsa_hash(Some(None)).is_err());
+    }
+
+    #[test]
     fn known_host_patterns_support_wildcards_and_negation() {
         let hosts = vec!["api.example.com".to_string()];
         assert!(known_host_patterns_match(
@@ -799,5 +952,19 @@ mod tests {
             &pattern,
             &["[example.com]:22".to_string()]
         ));
+    }
+
+    #[test]
+    fn replacing_host_key_removes_only_matching_non_ca_entries() {
+        let key =
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIALndOGf6U9tjg0dJPWxBm+FxomYRRJOt2HZ2jFUh67F";
+        let content = format!(
+            "example.com {key}\nother.example.com {key}\n@cert-authority example.com {key}\n"
+        );
+
+        assert_eq!(
+            remove_known_host_entries(&content, "example.com", 22),
+            format!("other.example.com {key}\n@cert-authority example.com {key}\n")
+        );
     }
 }
