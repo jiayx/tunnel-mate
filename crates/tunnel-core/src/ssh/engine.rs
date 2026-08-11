@@ -138,8 +138,14 @@ impl client::Handler for TunnelClient {
         connected_port: u32,
         originator_address: &str,
         originator_port: u32,
+        reply: client::ChannelOpenHandle,
         _session: &mut client::Session,
     ) -> Result<(), Self::Error> {
+        if self.forwarded_tx.is_closed() {
+            return Ok(());
+        }
+
+        reply.accept().await;
         let _ = self.forwarded_tx.send(ForwardedTcp {
             channel,
             connected_address: connected_address.to_string(),
