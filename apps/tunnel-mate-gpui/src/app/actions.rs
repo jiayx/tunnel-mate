@@ -76,15 +76,79 @@ impl TunnelMateApp {
         cx.notify();
     }
 
-    pub(super) fn delete_selected(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn request_delete_selected(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.selected_tunnel.clone() else {
             return;
         };
+        self.delete_confirmation = Some(id);
+        cx.notify();
+    }
+
+    pub(super) fn request_delete_from_form(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.form.as_ref().and_then(|form| form.editing_id.clone()) else {
+            return;
+        };
+        self.delete_confirmation = Some(id);
+        cx.notify();
+    }
+
+    pub(super) fn cancel_delete_confirmation(&mut self, cx: &mut Context<Self>) {
+        self.delete_confirmation = None;
+        cx.notify();
+    }
+
+    pub(super) fn confirm_delete_tunnel(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.delete_confirmation.take() else {
+            return;
+        };
+        let Some(tunnel) = self
+            .config
+            .tunnels
+            .iter()
+            .find(|tunnel| tunnel.id == id)
+            .cloned()
+        else {
+            cx.notify();
+            return;
+        };
+
         if self.is_active(&id) {
-            self.notice = Some("请先停止隧道再删除".into());
+            self.pending_starts.remove(&id);
+            self.pending_delete = Some(id.clone());
+            self.form = None;
+            self.notice = Some(
+                if self.language == Language::Zh {
+                    format!("正在停止并删除“{}”…", tunnel.name)
+                } else {
+                    format!("Stopping and deleting “{}”…", tunnel.name)
+                }
+                .into(),
+            );
+            let manager = self.manager.clone();
+            let sender = self.messages.clone();
+            self.runtime.spawn(async move {
+                match TunnelManager::stop_tunnel(manager, &tunnel.id).await {
+                    Ok(()) => {
+                        let _ = sender.send(AppMessage::DeleteReady(tunnel.id)).await;
+                    }
+                    Err(message) => {
+                        let _ = sender
+                            .send(AppMessage::DeleteFailed {
+                                tunnel_name: tunnel.name,
+                                message,
+                            })
+                            .await;
+                    }
+                }
+            });
             cx.notify();
             return;
         }
+
+        self.delete_tunnel(id, cx);
+    }
+
+    pub(super) fn delete_tunnel(&mut self, id: String, cx: &mut Context<Self>) {
         let name = self
             .config
             .tunnels
@@ -98,11 +162,32 @@ impl TunnelMateApp {
             Ok(()) => {
                 self.config = next_config;
                 self.statuses.remove(&id);
+                self.logs.remove(&id);
+                self.pending_starts.remove(&id);
+                self.pending_delete = None;
                 self.selected_tunnel = None;
-                self.notice = Some(format!("已删除“{name}”").into());
+                self.form = None;
+                self.notice = Some(
+                    if self.language == Language::Zh {
+                        format!("已删除“{name}”")
+                    } else {
+                        format!("Deleted “{name}”")
+                    }
+                    .into(),
+                );
                 self.refresh_tray();
             }
-            Err(error) => self.notice = Some(format!("删除失败：{error}").into()),
+            Err(error) => {
+                self.pending_delete = None;
+                self.notice = Some(
+                    if self.language == Language::Zh {
+                        format!("删除失败：{error}")
+                    } else {
+                        format!("Could not delete tunnel: {error}")
+                    }
+                    .into(),
+                );
+            }
         }
         cx.notify();
     }
@@ -192,6 +277,10 @@ impl TunnelMateApp {
             cx.notify();
             return;
         }
+        if self.delete_confirmation.take().is_some() {
+            cx.notify();
+            return;
+        }
         if self.save_confirmation.take().is_none()
             && self.auth_prompt.take().is_none()
             && self.diagnostics.take().is_none()
@@ -209,6 +298,9 @@ impl TunnelMateApp {
             .as_ref()
             .is_some_and(|form| form.ssh_picker_target.is_some() || form.group_menu_open)
         {
+            return;
+        }
+        if self.delete_confirmation.is_some() {
             return;
         }
         if self.pending_import.is_some() {
@@ -438,6 +530,14 @@ impl TunnelMateApp {
         let Some(form) = &mut self.form else { return };
         form.group_menu_open = !form.group_menu_open;
         cx.notify();
+    }
+
+    pub(super) fn close_form_group_menu(&mut self, cx: &mut Context<Self>) {
+        let Some(form) = &mut self.form else { return };
+        if form.group_menu_open {
+            form.group_menu_open = false;
+            cx.notify();
+        }
     }
 
     pub(super) fn select_form_group(&mut self, group_id: Option<String>, cx: &mut Context<Self>) {

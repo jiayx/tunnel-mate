@@ -127,14 +127,14 @@ impl TunnelMateApp {
                                     .flex()
                                     .gap(px(10.0))
                                     .child(
-                                        div().flex_grow(1.0).child(Self::form_field(
+                                        div().flex_grow(1.0).child(Self::required_form_field(
                                             self.language
                                                 .pick("保活间隔（秒）", "Keep-alive (seconds)"),
                                             form.keep_alive.clone(),
                                         )),
                                     )
                                     .child(div().flex_grow(1.0).child(
-                                        Self::form_field(
+                                        Self::required_form_field(
                                             self.language.pick(
                                                 "连接超时（秒）",
                                                 "Connection timeout (seconds)",

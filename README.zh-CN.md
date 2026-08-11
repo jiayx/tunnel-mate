@@ -65,13 +65,29 @@ CI 还会运行 RustSec 依赖安全审计。Dependabot 每月检查 Cargo 和�
 
 `v0.2.6` 是最后一个 Tauri 版本。原生 GPUI 版本从 `v0.5.0` 开始，后续沿用 `v0.5.x` 版本线。
 
+首次打包前安装固定版本的打包工具：
+
 ```bash
 cargo install cargo-packager --version 0.11.8 --locked
-cargo build --release -p tunnel-mate-gpui
-cargo packager --manifest-path apps/tunnel-mate-gpui/Cargo.toml --release
 ```
 
-打包后的 macOS 应用位于 `target/release/Tunnel Mate.app`；其他平台的安装包路径会随格式不同而变化。`.github/workflows/release.yml` 会检查 macOS、Linux 和 Windows，并在手工运行或推送版本标签时生成 DMG、DEB/AppImage 和 WiX/NSIS 安装包。
+只打包当前 Mac 可直接运行的 `.app`：
+
+```bash
+./scripts/package-local-debug.sh
+```
+
+脚本明确使用 `app` 格式，不会创建、挂载或自动打开 DMG。默认复用 Cargo 日常开发和测试共用的增量 Debug 缓存，并跳过仅正式 Release 需要的 LTO 和符号裁剪，因此小范围 UI 修改会快很多。默认产物位于 `target/debug/Tunnel Mate.app`。
+
+从干净的 `main` 分支准备并发布新版本：
+
+```bash
+./scripts/release.sh 0.5.2
+```
+
+发布脚本只会更新 workspace 版本号和锁文件、创建版本提交，并在推送 `main` 和对应 Tag 前要求确认；本地不会编译、测试或打包。新 Tag 推送后由 GitHub 执行检查和正式构建。传入 `--yes` 可以跳过最后的确认。
+
+`.github/workflows/release.yml` 会检查 macOS、Linux 和 Windows，并在手工运行或推送版本标签时生成 DMG、DEB/AppImage 和 WiX/NSIS 安装包。
 
 正式标签发布会同时生成 `SHA256SUMS` 和 GitHub 构建来源证明。仓库配置 Apple Developer ID/公证及 Windows Authenticode 密钥后，工作流会自动签名；没有相应密钥时会明确生成未签名安装包，不会伪造签名状态。
 

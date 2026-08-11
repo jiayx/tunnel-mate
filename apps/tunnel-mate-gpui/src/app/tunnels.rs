@@ -3,38 +3,151 @@ use super::*;
 impl TunnelMateApp {
     pub(super) fn save_form(&mut self, cx: &mut Context<Self>) {
         let Some(form) = &self.form else { return };
+        let language = self.language;
+        let manual_jump = form.jump_enabled && form.jump_host_id.is_none();
+        let advanced_has_error = form
+            .retry_count
+            .read(cx)
+            .value()
+            .trim()
+            .parse::<u32>()
+            .is_err()
+            || form
+                .retry_interval
+                .read(cx)
+                .value()
+                .trim()
+                .parse::<u32>()
+                .is_err()
+            || (manual_jump
+                && form
+                    .jump_port
+                    .read(cx)
+                    .value()
+                    .trim()
+                    .parse::<u16>()
+                    .map_or(true, |port| port == 0));
+        let mut missing = Vec::new();
+        let mut require = |input: &Entity<TextInput>, label: &'static str| {
+            if input.read(cx).value().trim().is_empty() {
+                missing.push(label);
+            }
+        };
+        require(&form.name, language.pick("名称", "Name"));
+        require(&form.ssh_host, language.pick("SSH 主机", "SSH host"));
+        require(&form.ssh_port, language.pick("SSH 端口", "SSH port"));
+        require(&form.ssh_user, language.pick("SSH 用户", "SSH user"));
+        let (listen_host_label, listen_port_label) = match form.kind {
+            ForwardKind::Local => (
+                language.pick("本机监听地址", "Local listen address"),
+                language.pick("本机端口", "Local port"),
+            ),
+            ForwardKind::Remote => (
+                language.pick("远端监听地址", "Remote listen address"),
+                language.pick("远端端口", "Remote port"),
+            ),
+            ForwardKind::Socks5 => (
+                language.pick("SOCKS5 监听地址", "SOCKS5 listen address"),
+                language.pick("SOCKS5 端口", "SOCKS5 port"),
+            ),
+        };
+        require(&form.listen_host, listen_host_label);
+        require(&form.listen_port, listen_port_label);
+        if form.kind != ForwardKind::Socks5 {
+            let (target_host_label, target_port_label) = match form.kind {
+                ForwardKind::Local => (
+                    language.pick("远端目标地址", "Remote target address"),
+                    language.pick("远端目标端口", "Remote target port"),
+                ),
+                ForwardKind::Remote => (
+                    language.pick("本机目标地址", "Local target address"),
+                    language.pick("本机目标端口", "Local target port"),
+                ),
+                ForwardKind::Socks5 => unreachable!(),
+            };
+            require(&form.target_host, target_host_label);
+            require(&form.target_port, target_port_label);
+        }
+        require(&form.retry_count, language.pick("重试次数", "Retry count"));
+        require(
+            &form.retry_interval,
+            language.pick("重试间隔", "Retry interval"),
+        );
+        if manual_jump {
+            require(&form.jump_host, language.pick("跳板机主机", "Jump host"));
+            require(
+                &form.jump_port,
+                language.pick("跳板机端口", "Jump host port"),
+            );
+            require(
+                &form.jump_user,
+                language.pick("跳板机用户", "Jump host user"),
+            );
+        }
+        if !missing.is_empty() {
+            let message = if language == Language::Zh {
+                format!("请填写以下必填项：{}", missing.join("、"))
+            } else {
+                format!("Complete the required fields: {}", missing.join(", "))
+            };
+            if let Some(form) = &mut self.form {
+                form.validation_error = Some(message.into());
+                form.advanced |= advanced_has_error;
+            }
+            self.notice = None;
+            cx.notify();
+            return;
+        }
+
         let parse_port = |input: &Entity<TextInput>, label: &str| -> Result<u16, String> {
             input
                 .read(cx)
                 .value()
+                .trim()
                 .parse::<u16>()
-                .map_err(|_| format!("{label}必须是 1–65535 的端口"))
+                .ok()
+                .filter(|port| *port > 0)
+                .ok_or_else(|| {
+                    if language == Language::Zh {
+                        format!("{label}必须是 1–65535 的端口")
+                    } else {
+                        format!("{label} must be a port from 1 to 65535")
+                    }
+                })
         };
         let parse_u32 = |input: &Entity<TextInput>, label: &str| -> Result<u32, String> {
-            input
-                .read(cx)
-                .value()
-                .parse::<u32>()
-                .map_err(|_| format!("{label}必须是非负整数"))
+            input.read(cx).value().trim().parse::<u32>().map_err(|_| {
+                if language == Language::Zh {
+                    format!("{label}必须是非负整数")
+                } else {
+                    format!("{label} must be a non-negative integer")
+                }
+            })
         };
         let result = (|| {
             let listen = Endpoint {
                 host: form.listen_host.read(cx).value(),
-                port: parse_port(&form.listen_port, "监听端口")?,
+                port: parse_port(&form.listen_port, language.pick("监听端口", "Listen port"))?,
             };
             let forward = match form.kind {
                 ForwardKind::Local => ForwardSpec::Local {
                     listen,
                     target: Endpoint {
                         host: form.target_host.read(cx).value(),
-                        port: parse_port(&form.target_port, "目标端口")?,
+                        port: parse_port(
+                            &form.target_port,
+                            language.pick("目标端口", "Target port"),
+                        )?,
                     },
                 },
                 ForwardKind::Remote => ForwardSpec::Remote {
                     listen,
                     target: Endpoint {
                         host: form.target_host.read(cx).value(),
-                        port: parse_port(&form.target_port, "目标端口")?,
+                        port: parse_port(
+                            &form.target_port,
+                            language.pick("目标端口", "Target port"),
+                        )?,
                     },
                 },
                 ForwardKind::Socks5 => ForwardSpec::Socks5 { listen },
@@ -50,7 +163,10 @@ impl TunnelMateApp {
             let jump_password = form.jump_password.read(cx).value();
             let manual_jump = form.jump_enabled && form.jump_host_id.is_none();
             let jump_port = if manual_jump {
-                Some(parse_port(&form.jump_port, "跳板机端口")?)
+                Some(parse_port(
+                    &form.jump_port,
+                    language.pick("跳板机端口", "Jump host port"),
+                )?)
             } else {
                 None
             };
@@ -60,7 +176,7 @@ impl TunnelMateApp {
                 description: (!description.trim().is_empty()).then_some(description),
                 group_id: form.group_id.clone(),
                 ssh_host: form.ssh_host.read(cx).value(),
-                ssh_port: parse_port(&form.ssh_port, "SSH 端口")?,
+                ssh_port: parse_port(&form.ssh_port, language.pick("SSH 端口", "SSH port"))?,
                 ssh_user: form.ssh_user.read(cx).value(),
                 ssh_identity_file: (!identity.trim().is_empty()).then_some(identity),
                 ssh_password: (!ssh_password.is_empty()).then_some(ssh_password),
@@ -81,15 +197,30 @@ impl TunnelMateApp {
                 forward,
                 start_with_app: form.start_with_app,
                 auto_reconnect: form.auto_reconnect,
-                retry_count: parse_u32(&form.retry_count, "重试次数")?,
-                retry_interval: parse_u32(&form.retry_interval, "重试间隔")?,
+                retry_count: parse_u32(
+                    &form.retry_count,
+                    language.pick("重试次数", "Retry count"),
+                )?,
+                retry_interval: parse_u32(
+                    &form.retry_interval,
+                    language.pick("重试间隔", "Retry interval"),
+                )?,
             };
             validate_tunnel(&tunnel)?;
             Ok::<_, String>((tunnel, form.start_after_save))
         })();
         match result {
-            Err(error) => self.notice = Some(error.into()),
+            Err(error) => {
+                if let Some(form) = &mut self.form {
+                    form.validation_error = Some(error.into());
+                    form.advanced |= advanced_has_error;
+                }
+                self.notice = None;
+            }
             Ok((tunnel, start_after_save)) => {
+                if let Some(form) = &mut self.form {
+                    form.validation_error = None;
+                }
                 let unchanged = self
                     .config
                     .tunnels

@@ -504,6 +504,121 @@ impl TunnelMateApp {
             )
     }
 
+    pub(super) fn render_delete_confirmation(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let id = self
+            .delete_confirmation
+            .as_ref()
+            .expect("delete confirmation");
+        let tunnel = self
+            .config
+            .tunnels
+            .iter()
+            .find(|tunnel| &tunnel.id == id)
+            .expect("tunnel being deleted");
+        let running = self.is_active(id);
+        let message = match (running, self.language) {
+            (true, Language::Zh) => format!(
+                "“{}”当前正在运行。删除后会立即断开连接，并且无法恢复。",
+                tunnel.name
+            ),
+            (true, Language::En) => format!(
+                "“{}” is running. Deleting it will disconnect immediately and cannot be undone.",
+                tunnel.name
+            ),
+            (false, Language::Zh) => {
+                format!("确定删除“{}”吗？此操作无法恢复。", tunnel.name)
+            }
+            (false, Language::En) => {
+                format!("Delete “{}”? This action cannot be undone.", tunnel.name)
+            }
+        };
+
+        modal_backdrop()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgba(0x080a0dd6))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .w(px(440.0))
+                    .rounded(px(14.0))
+                    .border_1()
+                    .border_color(BORDER)
+                    .bg(color(0x171d29))
+                    .p(px(22.0))
+                    .child(
+                        div()
+                            .text_size(px(16.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(TEXT)
+                            .child(self.language.pick("删除隧道？", "Delete tunnel?")),
+                    )
+                    .child(
+                        div()
+                            .mt(px(10.0))
+                            .text_size(px(12.0))
+                            .line_height(relative(1.55))
+                            .text_color(MUTED)
+                            .child(message),
+                    )
+                    .child(
+                        div()
+                            .mt(px(22.0))
+                            .flex()
+                            .justify_end()
+                            .gap(px(10.0))
+                            .child(
+                                div()
+                                    .h(px(36.0))
+                                    .px(px(15.0))
+                                    .flex()
+                                    .items_center()
+                                    .rounded(px(8.0))
+                                    .border_1()
+                                    .border_color(BORDER)
+                                    .text_size(px(12.0))
+                                    .text_color(TEXT)
+                                    .cursor_pointer()
+                                    .on_mouse_up(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.cancel_delete_confirmation(cx)
+                                        }),
+                                    )
+                                    .child(self.language.pick("取消", "Cancel")),
+                            )
+                            .child(
+                                div()
+                                    .h(px(36.0))
+                                    .px(px(15.0))
+                                    .flex()
+                                    .items_center()
+                                    .rounded(px(8.0))
+                                    .border_1()
+                                    .border_color(DANGER)
+                                    .bg(glass(0xdc747c, 0.16))
+                                    .text_size(px(12.0))
+                                    .text_color(DANGER)
+                                    .cursor_pointer()
+                                    .hover(|style| style.bg(glass(0xdc747c, 0.24)))
+                                    .on_mouse_up(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.confirm_delete_tunnel(cx)
+                                        }),
+                                    )
+                                    .child(if running {
+                                        self.language.pick("停止并删除", "Stop and delete")
+                                    } else {
+                                        self.language.pick("删除", "Delete")
+                                    }),
+                            ),
+                    ),
+            )
+    }
+
     pub(super) fn render_import_confirmation(&self, cx: &mut Context<Self>) -> impl IntoElement {
         modal_backdrop()
             .flex()
@@ -642,7 +757,7 @@ impl TunnelMateApp {
                             .flex()
                             .flex_col()
                             .gap(px(13.0))
-                            .child(Self::form_field(
+                            .child(Self::required_form_field(
                                 self.language.pick("名称", "Name"),
                                 form.name.clone(),
                             ))

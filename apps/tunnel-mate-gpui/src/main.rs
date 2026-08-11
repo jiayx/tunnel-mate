@@ -165,6 +165,11 @@ enum AppMessage {
     ImportSelected(AppConfig),
     ImportFailed(String),
     ConfigImported(AppConfig),
+    DeleteReady(String),
+    DeleteFailed {
+        tunnel_name: String,
+        message: String,
+    },
     FileOperation(String),
     PrivateKeySelected(String),
     Tray(String),
@@ -194,6 +199,7 @@ enum SshPickerTarget {
 
 struct TunnelForm {
     editing_id: Option<String>,
+    validation_error: Option<SharedString>,
     kind: ForwardKind,
     advanced: bool,
     start_after_save: bool,
@@ -293,6 +299,7 @@ impl TunnelForm {
         });
         Self {
             editing_id: tunnel.map(|tunnel| tunnel.id.clone()),
+            validation_error: None,
             kind,
             advanced: false,
             start_after_save: tunnel.is_none(),
@@ -433,6 +440,8 @@ struct TunnelMateApp {
     pending_import: Option<AppConfig>,
     group_form: Option<GroupForm>,
     save_confirmation: Option<Tunnel>,
+    delete_confirmation: Option<String>,
+    pending_delete: Option<String>,
     auth_prompt: Option<AuthPrompt>,
     about_open: bool,
     manager: Arc<Mutex<TunnelManager>>,
@@ -489,6 +498,9 @@ impl Render for TunnelMateApp {
             })
             .when(self.save_confirmation.is_some(), |root| {
                 root.child(self.render_save_confirmation(cx))
+            })
+            .when(self.delete_confirmation.is_some(), |root| {
+                root.child(self.render_delete_confirmation(cx))
             })
             .when(self.diagnostics.is_some(), |root| {
                 root.child(self.render_diagnostics(cx))

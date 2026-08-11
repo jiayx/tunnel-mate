@@ -418,7 +418,7 @@ impl TunnelMateApp {
                         .cursor_pointer()
                         .on_mouse_up(
                             MouseButton::Left,
-                            cx.listener(|this, _, _, cx| this.delete_selected(cx)),
+                            cx.listener(|this, _, _, cx| this.request_delete_selected(cx)),
                         )
                         .child("删除"),
                 ),

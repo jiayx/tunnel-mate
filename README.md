@@ -102,14 +102,35 @@ dependencies monthly; workflow actions are pinned to immutable commit SHAs.
 `v0.2.6` is the final Tauri release. Native GPUI releases start at `v0.5.0`
 and continue on the `v0.5.x` version line.
 
+Install the pinned packaging tool once:
+
 ```bash
 cargo install cargo-packager --version 0.11.8 --locked
-cargo build --release -p tunnel-mate-gpui
-cargo packager --manifest-path apps/tunnel-mate-gpui/Cargo.toml --release
 ```
 
-The packaged macOS application is written to
-`target/release/Tunnel Mate.app`; installer paths vary by platform and format.
+Build only the local macOS application bundle with:
+
+```bash
+./scripts/package-local-debug.sh
+```
+
+The script explicitly uses the `app` format, so it does not create, mount, or
+open a DMG. By default it reuses Cargo's incremental debug build, including the
+cache shared with normal development and tests, and skips release-only LTO and
+symbol stripping. Small UI changes therefore rebuild much faster. The default
+output is `target/debug/Tunnel Mate.app`.
+
+Prepare and publish a new tagged version from a clean `main` branch with:
+
+```bash
+./scripts/release.sh 0.5.2
+```
+
+The release script updates the workspace version and lockfile, creates the
+release commit, and asks before pushing `main` and the matching tag. It does not
+compile, test, or package the app locally; checks and release builds run after
+the tag is pushed. Pass `--yes` to skip the final confirmation.
+
 The `.github/workflows/release.yml` workflow checks macOS, Linux, and Windows
 and produces DMG, DEB/AppImage, and WiX/NSIS artifacts for manual or tagged
 releases. Tagged releases include `SHA256SUMS` and GitHub build-provenance

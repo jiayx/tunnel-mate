@@ -119,6 +119,8 @@ impl TunnelMateApp {
             pending_import: None,
             group_form: None,
             save_confirmation: None,
+            delete_confirmation: None,
+            pending_delete: None,
             auth_prompt: None,
             about_open: false,
             manager,
@@ -205,6 +207,31 @@ impl TunnelMateApp {
                         )
                     } else {
                         format!("Operation failed for “{tunnel_name}”: {message}")
+                    }
+                    .into(),
+                );
+            }
+            AppMessage::DeleteReady(tunnel_id) => {
+                if self.pending_delete.as_deref() == Some(tunnel_id.as_str()) {
+                    self.pending_delete = None;
+                    self.delete_tunnel(tunnel_id, cx);
+                }
+            }
+            AppMessage::DeleteFailed {
+                tunnel_name,
+                message,
+            } => {
+                self.pending_delete = None;
+                self.notice = Some(
+                    if self.language == Language::Zh {
+                        format!(
+                            "无法删除“{tunnel_name}”：停止连接失败：{}",
+                            self.language.runtime_message(&message)
+                        )
+                    } else {
+                        format!(
+                            "Could not delete “{tunnel_name}” because stopping it failed: {message}"
+                        )
                     }
                     .into(),
                 );

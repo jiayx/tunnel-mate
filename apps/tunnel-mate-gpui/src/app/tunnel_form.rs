@@ -3,6 +3,7 @@ use super::*;
 impl TunnelMateApp {
     pub(super) fn render_create_sheet(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let form = self.form.as_ref().expect("open form");
+        let is_editing = form.editing_id.is_some();
         let heading = if form.editing_id.is_some() {
             self.language.pick("编辑隧道", "Edit tunnel")
         } else {
@@ -127,13 +128,7 @@ impl TunnelMateApp {
             .shadow_lg()
             .occlude()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                if let Some(form) = &mut this.form {
-                    form.group_menu_open = false;
-                    cx.notify();
-                }
-            }));
+            .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation());
         let ungrouped_selected = selected_group_id.is_none();
         group_options = group_options.child(
             div()
@@ -259,7 +254,7 @@ impl TunnelMateApp {
                         }),
                     )
                     .child(group_name.to_string())
-                    .child(if form.group_menu_open { "▴" } else { "▾" }),
+                    .child(Self::disclosure_chevron(form.group_menu_open, "▴", "▾")),
             )
             .when(form.group_menu_open, |container| {
                 container.child(
@@ -321,6 +316,32 @@ impl TunnelMateApp {
                                     .child("×"),
                             ),
                     )
+                    .when_some(form.validation_error.clone(), |sheet, error| {
+                        sheet.child(
+                            div()
+                                .mx(px(18.0))
+                                .mt(px(12.0))
+                                .px(px(12.0))
+                                .py(px(9.0))
+                                .flex()
+                                .items_center()
+                                .gap(px(8.0))
+                                .rounded(px(8.0))
+                                .border_1()
+                                .border_color(glass(0xdc747c, 0.55))
+                                .bg(glass(0xdc747c, 0.10))
+                                .text_size(px(11.0))
+                                .text_color(TEXT)
+                                .child(div().text_color(DANGER).child("!"))
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .whitespace_normal()
+                                        .line_height(relative(1.4))
+                                        .child(error),
+                                ),
+                        )
+                    })
                     .child(
                         div()
                             .flex()
@@ -329,7 +350,7 @@ impl TunnelMateApp {
                             .p(px(18.0))
                             .id("tunnel-form-scroll")
                             .overflow_y_scroll()
-                            .child(Self::form_field(
+                            .child(Self::required_form_field(
                                 self.language.pick("名称", "Name"),
                                 form.name.clone(),
                             ))
@@ -422,15 +443,15 @@ impl TunnelMateApp {
                                         div()
                                             .flex()
                                             .gap(px(10.0))
-                                            .child(div().flex_grow(1.0).child(Self::form_field(
+                                            .child(div().flex_grow(1.0).child(Self::required_form_field(
                                                 self.language.pick("主机", "Host"),
                                                 form.ssh_host.clone(),
                                             )))
-                                            .child(div().w(px(100.0)).child(Self::form_field(
+                                            .child(div().w(px(100.0)).child(Self::required_form_field(
                                                 self.language.pick("端口", "Port"),
                                                 form.ssh_port.clone(),
                                             )))
-                                            .child(div().w(px(150.0)).child(Self::form_field(
+                                            .child(div().w(px(150.0)).child(Self::required_form_field(
                                                 self.language.pick("用户", "User"),
                                                 form.ssh_user.clone(),
                                             ))),
@@ -501,11 +522,11 @@ impl TunnelMateApp {
                                 div()
                                     .flex()
                                     .gap(px(10.0))
-                                    .child(div().flex_grow(1.0).child(Self::form_field(
+                                    .child(div().flex_grow(1.0).child(Self::required_form_field(
                                         listen_address_label,
                                         form.listen_host.clone(),
                                     )))
-                                    .child(div().w(px(130.0)).child(Self::form_field(
+                                    .child(div().w(px(130.0)).child(Self::required_form_field(
                                         listen_port_label,
                                         form.listen_port.clone(),
                                     ))),
@@ -515,11 +536,11 @@ impl TunnelMateApp {
                                     div()
                                         .flex()
                                         .gap(px(10.0))
-                                        .child(div().flex_grow(1.0).child(Self::form_field(
+                                        .child(div().flex_grow(1.0).child(Self::required_form_field(
                                             target_address_label,
                                             form.target_host.clone(),
                                         )))
-                                        .child(div().w(px(130.0)).child(Self::form_field(
+                                        .child(div().w(px(130.0)).child(Self::required_form_field(
                                             target_port_label,
                                             form.target_port.clone(),
                                         ))),
@@ -591,12 +612,11 @@ impl TunnelMateApp {
                                             .items_center()
                                             .gap(px(6.0))
                                             .child(
-                                                div()
-                                                    .w(px(14.0))
-                                                    .text_center()
-                                                    .text_size(px(14.0))
-                                                    .text_color(MUTED)
-                                                    .child(if form.advanced { "▾" } else { "▸" }),
+                                                Self::disclosure_chevron(
+                                                    form.advanced,
+                                                    "▾",
+                                                    "▸",
+                                                ),
                                             )
                                             .child(
                                                 self.language.pick("高级设置", "Advanced"),
@@ -651,11 +671,11 @@ impl TunnelMateApp {
                                         div()
                                             .flex()
                                             .gap(px(10.0))
-                                            .child(div().flex_grow(1.0).child(Self::form_field(
+                                            .child(div().flex_grow(1.0).child(Self::required_form_field(
                                                 self.language.pick("重试次数", "Retry count"),
                                                 form.retry_count.clone(),
                                             )))
-                                            .child(div().flex_grow(1.0).child(Self::form_field(
+                                            .child(div().flex_grow(1.0).child(Self::required_form_field(
                                                 self.language.pick(
                                                     "重试间隔（秒）",
                                                     "Retry interval (seconds)",
@@ -795,19 +815,19 @@ impl TunnelMateApp {
                                                         .flex()
                                                         .gap(px(10.0))
                                                         .child(div().flex_grow(1.0).child(
-                                                            Self::form_field(
+                                                            Self::required_form_field(
                                                                 self.language.pick("主机", "Host"),
                                                                 form.jump_host.clone(),
                                                             ),
                                                         ))
                                                         .child(div().w(px(100.0)).child(
-                                                            Self::form_field(
+                                                            Self::required_form_field(
                                                                 self.language.pick("端口", "Port"),
                                                                 form.jump_port.clone(),
                                                             ),
                                                         ))
                                                         .child(div().w(px(140.0)).child(
-                                                            Self::form_field(
+                                                            Self::required_form_field(
                                                                 self.language.pick("用户", "User"),
                                                                 form.jump_user.clone(),
                                                             ),
@@ -828,93 +848,149 @@ impl TunnelMateApp {
                     .child(
                         div()
                             .flex()
-                            .justify_end()
-                            .gap(px(10.0))
-                            .h(px(64.0))
+                            .flex_none()
+                            .h(px(58.0))
                             .px(px(18.0))
                             .items_center()
                             .border_t_1()
                             .border_color(BORDER)
+                            .when(is_editing, |footer| {
+                                footer.justify_between().child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .h(px(36.0))
+                                        .px(px(12.0))
+                                        .rounded(px(8.0))
+                                        .text_size(px(12.0))
+                                        .text_color(DANGER)
+                                        .cursor_pointer()
+                                        .hover(|style| style.bg(glass(0xdc747c, 0.12)))
+                                        .on_mouse_up(
+                                            MouseButton::Left,
+                                            cx.listener(|this, _, _, cx| {
+                                                this.request_delete_from_form(cx)
+                                            }),
+                                        )
+                                        .child(self.language.pick("删除隧道", "Delete tunnel")),
+                                )
+                            })
+                            .when(!is_editing, |footer| footer.justify_end())
                             .child(
                                 div()
                                     .flex()
                                     .items_center()
-                                    .justify_center()
-                                    .h(px(36.0))
-                                    .px(px(14.0))
-                                    .rounded(px(8.0))
-                                    .border_1()
-                                    .border_color(BORDER)
-                                    .text_size(px(12.0))
-                                    .text_color(TEXT)
-                                    .cursor_pointer()
-                                    .on_mouse_up(
-                                        MouseButton::Left,
-                                        cx.listener(|this, _, _, cx| this.close_create_sheet(cx)),
-                                    )
-                                    .child(self.language.pick("取消", "Cancel")),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(8.0))
-                                    .mr(px(4.0))
-                                    .h(px(36.0))
-                                    .px(px(4.0))
-                                    .text_size(px(12.0))
-                                    .text_color(TEXT)
-                                    .cursor_pointer()
-                                    .on_mouse_up(
-                                        MouseButton::Left,
-                                        cx.listener(|this, _, _, cx| {
-                                            this.toggle_start_after_save(cx)
-                                        }),
-                                    )
+                                    .gap(px(10.0))
                                     .child(
                                         div()
-                                            .size(px(20.0))
                                             .flex()
                                             .items_center()
                                             .justify_center()
-                                            .rounded(px(5.0))
+                                            .h(px(36.0))
+                                            .px(px(14.0))
+                                            .rounded(px(8.0))
                                             .border_1()
-                                            .border_color(if form.start_after_save {
-                                                PRIMARY
-                                            } else {
-                                                color(0x4b5260)
-                                            })
-                                            .bg(if form.start_after_save {
-                                                PRIMARY
-                                            } else {
-                                                APP_BG
-                                            })
-                                            .text_size(px(13.0))
-                                            .font_weight(FontWeight::BOLD)
+                                            .border_color(BORDER)
+                                            .text_size(px(12.0))
+                                            .text_color(TEXT)
+                                            .cursor_pointer()
+                                            .on_mouse_up(
+                                                MouseButton::Left,
+                                                cx.listener(|this, _, _, cx| {
+                                                    this.close_create_sheet(cx)
+                                                }),
+                                            )
+                                            .child(self.language.pick("取消", "Cancel")),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(8.0))
+                                            .mr(px(4.0))
+                                            .h(px(36.0))
+                                            .px(px(4.0))
+                                            .text_size(px(12.0))
+                                            .text_color(TEXT)
+                                            .cursor_pointer()
+                                            .on_mouse_up(
+                                                MouseButton::Left,
+                                                cx.listener(|this, _, _, cx| {
+                                                    this.toggle_start_after_save(cx)
+                                                }),
+                                            )
+                                            .child(
+                                                div()
+                                                    .size(px(20.0))
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .rounded(px(5.0))
+                                                    .border_1()
+                                                    .border_color(if form.start_after_save {
+                                                        PRIMARY
+                                                    } else {
+                                                        color(0x4b5260)
+                                                    })
+                                                    .bg(if form.start_after_save {
+                                                        PRIMARY
+                                                    } else {
+                                                        APP_BG
+                                                    })
+                                                    .text_size(px(13.0))
+                                                    .font_weight(FontWeight::BOLD)
+                                                    .text_color(PRIMARY_TEXT)
+                                                    .child(if form.start_after_save {
+                                                        "✓"
+                                                    } else {
+                                                        ""
+                                                    }),
+                                            )
+                                            .child(
+                                                self.language.pick(
+                                                    "保存后启动",
+                                                    "Start after save",
+                                                ),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .h(px(36.0))
+                                            .px(px(14.0))
+                                            .rounded(px(8.0))
+                                            .bg(PRIMARY)
+                                            .text_size(px(12.0))
                                             .text_color(PRIMARY_TEXT)
-                                            .child(if form.start_after_save { "✓" } else { "" }),
-                                    )
-                                    .child(self.language.pick("保存后启动", "Start after save")),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .h(px(36.0))
-                                    .px(px(14.0))
-                                    .rounded(px(8.0))
-                                    .bg(PRIMARY)
-                                    .text_size(px(12.0))
-                                    .text_color(PRIMARY_TEXT)
-                                    .cursor_pointer()
-                                    .on_mouse_up(
-                                        MouseButton::Left,
-                                        cx.listener(|this, _, _, cx| this.save_form(cx)),
-                                    )
-                                    .child(self.language.pick("保存", "Save")),
+                                            .cursor_pointer()
+                                            .on_mouse_up(
+                                                MouseButton::Left,
+                                                cx.listener(|this, _, _, cx| this.save_form(cx)),
+                                            )
+                                            .child(self.language.pick("保存", "Save")),
+                                    ),
                             ),
                     ),
             )
+            .when(form.group_menu_open, |backdrop| {
+                backdrop.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .occlude()
+                        .on_scroll_wheel(stop_scroll_propagation)
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_mouse_up(
+                            MouseButton::Left,
+                            cx.listener(|this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.close_form_group_menu(cx);
+                            }),
+                        ),
+                )
+            })
     }
 }

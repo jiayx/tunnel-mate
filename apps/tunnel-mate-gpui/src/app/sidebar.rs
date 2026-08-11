@@ -511,11 +511,58 @@ impl TunnelMateApp {
     }
 
     pub(super) fn form_field(label: &'static str, input: Entity<TextInput>) -> impl IntoElement {
+        Self::form_field_with_requirement(label, input, false)
+    }
+
+    pub(super) fn disclosure_chevron(
+        expanded: bool,
+        expanded_glyph: &'static str,
+        collapsed_glyph: &'static str,
+    ) -> impl IntoElement {
+        div()
+            .flex_none()
+            .size(px(20.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_size(px(16.0))
+            .line_height(relative(1.0))
+            .text_color(MUTED)
+            .child(if expanded {
+                expanded_glyph
+            } else {
+                collapsed_glyph
+            })
+    }
+
+    pub(super) fn required_form_field(
+        label: &'static str,
+        input: Entity<TextInput>,
+    ) -> impl IntoElement {
+        Self::form_field_with_requirement(label, input, true)
+    }
+
+    fn form_field_with_requirement(
+        label: &'static str,
+        input: Entity<TextInput>,
+        required: bool,
+    ) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
             .gap(px(6.0))
-            .child(div().text_size(px(11.0)).text_color(MUTED).child(label))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(3.0))
+                    .text_size(px(11.0))
+                    .text_color(MUTED)
+                    .child(label)
+                    .when(required, |label| {
+                        label.child(div().text_color(DANGER).child("*"))
+                    }),
+            )
             .child(input)
     }
 }
