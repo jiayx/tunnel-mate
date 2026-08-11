@@ -7470,6 +7470,7 @@ dependencies = [
  "dirs 6.0.0",
  "keyring",
  "regex",
+ "ring",
  "russh",
  "serde",
  "serde_json",

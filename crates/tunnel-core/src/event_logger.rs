@@ -1,9 +1,20 @@
 use crate::config::ConfigStore;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::fs;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
+use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
+
+const MAX_EVENT_COUNT: usize = 1_000;
+const MAX_EVENT_FILE_BYTES: u64 = 2 * 1024 * 1024;
+
+fn event_file_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -81,10 +92,18 @@ impl EventLogger {
         };
 
         let path = self.store.get_events_path();
+        let _guard = event_file_lock()
+            .lock()
+            .map_err(|_| "Events file lock was poisoned".to_string())?;
 
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+            }
         }
 
         let content = serde_json::to_string(&event)
@@ -94,7 +113,23 @@ impl EventLogger {
             .append(true)
             .open(&path)
             .map_err(|e| format!("Failed to open events file: {}", e))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+                .map_err(|e| format!("Failed to secure events file: {}", e))?;
+        }
         writeln!(file, "{}", content).map_err(|e| format!("Failed to write events data: {}", e))?;
+        file.flush()
+            .map_err(|e| format!("Failed to flush events data: {}", e))?;
+        if file
+            .metadata()
+            .map(|metadata| metadata.len() > MAX_EVENT_FILE_BYTES)
+            .unwrap_or(false)
+        {
+            drop(file);
+            compact_events_file(&path)?;
+        }
 
         Ok(event)
     }
@@ -104,32 +139,73 @@ impl EventLogger {
         if !path.exists() {
             return Ok(Vec::new());
         }
-
-        let content =
-            fs::read_to_string(&path).map_err(|e| format!("Failed to read events file: {}", e))?;
-
-        let mut events = content
-            .lines()
-            .filter(|line| !line.trim().is_empty())
+        let _guard = event_file_lock()
+            .lock()
+            .map_err(|_| "Events file lock was poisoned".to_string())?;
+        read_last_lines(&path)?
+            .into_iter()
             .map(|line| {
-                serde_json::from_str(line)
+                serde_json::from_str(&line)
                     .map_err(|e| format!("Failed to parse events file: {}", e))
             })
-            .collect::<Result<Vec<LogEvent>, String>>()?;
-        if events.len() > 1000 {
-            events = events.split_off(events.len() - 1000);
-        }
-
-        Ok(events)
+            .collect()
     }
 
     pub fn clear_events(&self) -> Result<(), String> {
         let path = self.store.get_events_path();
+        let _guard = event_file_lock()
+            .lock()
+            .map_err(|_| "Events file lock was poisoned".to_string())?;
         if path.exists() {
             fs::remove_file(&path).map_err(|e| format!("Failed to delete events file: {}", e))?;
         }
         Ok(())
     }
+}
+
+fn read_last_lines(path: &Path) -> Result<VecDeque<String>, String> {
+    let file = fs::File::open(path).map_err(|e| format!("Failed to read events file: {}", e))?;
+    let mut lines: VecDeque<String> = VecDeque::with_capacity(MAX_EVENT_COUNT);
+    let mut retained_bytes = 0usize;
+    for line in BufReader::new(file).lines() {
+        let line = line.map_err(|e| format!("Failed to read events file: {}", e))?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let line_bytes = line.len() + 1;
+        while !lines.is_empty()
+            && (lines.len() >= MAX_EVENT_COUNT
+                || retained_bytes + line_bytes > MAX_EVENT_FILE_BYTES as usize)
+        {
+            if let Some(removed) = lines.pop_front() {
+                retained_bytes = retained_bytes.saturating_sub(removed.len() + 1);
+            }
+        }
+        retained_bytes += line_bytes;
+        lines.push_back(line);
+    }
+    Ok(lines)
+}
+
+fn compact_events_file(path: &Path) -> Result<(), String> {
+    let lines = read_last_lines(path)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Events file has no parent directory".to_string())?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|e| format!("Failed to create compacted events file: {}", e))?;
+    for line in lines {
+        writeln!(temporary, "{}", line)
+            .map_err(|e| format!("Failed to compact events file: {}", e))?;
+    }
+    temporary
+        .as_file()
+        .sync_all()
+        .map_err(|e| format!("Failed to sync compacted events file: {}", e))?;
+    temporary
+        .persist(path)
+        .map_err(|e| format!("Failed to replace events file: {}", e.error))?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -167,5 +243,25 @@ mod tests {
 
         logger.clear_events().unwrap();
         assert!(logger.get_events().unwrap().is_empty());
+    }
+
+    #[test]
+    fn rotates_large_event_files_to_the_latest_entries() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = ConfigStore::from_base_path(PathBuf::from(directory.path()));
+        let path = store.get_events_path();
+        let logger = EventLogger::with_store(store);
+        let payload = "x".repeat(3_000);
+
+        for index in 0..1_050 {
+            logger
+                .log(None, None, EventType::Started, format!("{index}:{payload}"))
+                .unwrap();
+        }
+
+        let events = logger.get_events().unwrap();
+        assert!(events.len() <= MAX_EVENT_COUNT);
+        assert!(events.last().unwrap().message.starts_with("1049:"));
+        assert!(fs::metadata(path).unwrap().len() < MAX_EVENT_FILE_BYTES);
     }
 }

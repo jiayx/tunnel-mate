@@ -31,6 +31,11 @@ Tunnel Mate fills the resolved host, port, user, and identity file while keeping
 the SSH alias available for matching. New tunnels enable **Reconnect when the
 app starts** and **Automatic reconnect** by default.
 
+On first contact, Tunnel Mate shows the server fingerprint and offers **Trust
+and connect**. A changed key is never overwritten with one click: verify the
+new fingerprint independently, copy the provided `ssh-keygen -R` command, and
+connect again. Keys marked as revoked are blocked without an in-app bypass.
+
 Use the inline **Edit** and **Diagnose** actions on a tunnel. Saving an unchanged
 running tunnel does nothing; saving actual changes asks for confirmation before
 disconnecting and reconnecting it. Diagnostics understand the active tunnel and
@@ -45,6 +50,9 @@ supports `Command-,` for Settings, `Command-W` to close the window, `Command-M`
 to minimize, and `Command-Q` to quit. If **Close to tray** is enabled, closing
 the window hides it while tunnels continue running; use the Dock icon or menu
 bar item to show it again.
+
+Forms support `Tab`/`Shift-Tab` focus navigation, `Enter` for the primary
+dialog action, and `Escape` to close the topmost dialog.
 
 On Windows, the app uses the notification-area icon: left-click restores the
 window and right-click opens tunnel controls. It uses the native title bar,
@@ -86,6 +94,9 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
+CI also runs a RustSec dependency audit. Dependabot checks Cargo and workflow
+dependencies monthly; workflow actions are pinned to immutable commit SHAs.
+
 ## Packaging and releases
 
 `v0.2.6` is the final Tauri release. Native GPUI releases start at `v0.5.0`
@@ -101,7 +112,10 @@ The packaged macOS application is written to
 `target/release/Tunnel Mate.app`; installer paths vary by platform and format.
 The `.github/workflows/release.yml` workflow checks macOS, Linux, and Windows
 and produces DMG, DEB/AppImage, and WiX/NSIS artifacts for manual or tagged
-releases.
+releases. Tagged releases include `SHA256SUMS` and GitHub build-provenance
+attestations. The workflow automatically uses Apple Developer ID/notarization
+and Windows Authenticode credentials when their repository secrets are
+configured; otherwise it explicitly produces unsigned packages.
 
 Unsigned macOS builds may require right-clicking the app and choosing **Open**
 the first time.

@@ -86,9 +86,18 @@ impl TunnelMateApp {
         for pixel in logo.pixels_mut() {
             pixel.0.swap(0, 2);
         }
-        let keystroke_subscription = cx.observe_keystrokes(|this, event, _, cx| {
+        let keystroke_subscription = cx.observe_keystrokes(|this, event, window, cx| {
             if event.keystroke.key == "escape" {
                 this.dismiss(cx);
+            } else if event.keystroke.key == "tab" {
+                if event.keystroke.modifiers.shift {
+                    window.focus_prev(cx);
+                } else {
+                    window.focus_next(cx);
+                }
+                cx.stop_propagation();
+            } else if event.keystroke.key == "enter" {
+                this.submit_primary(cx);
             }
         });
         Self {
@@ -138,10 +147,13 @@ impl TunnelMateApp {
                                 )
                             }),
                         });
-                    } else if let Some((host, port, fingerprint)) = parse_host_key_prompt(message) {
+                    } else if let Some((issue, host, port, fingerprint)) =
+                        parse_host_key_prompt(message)
+                    {
                         intervention = true;
                         self.auth_prompt = Some(AuthPrompt::HostKey {
                             tunnel_id: payload.tunnel_id.clone(),
+                            issue,
                             host,
                             port,
                             fingerprint,
@@ -157,7 +169,7 @@ impl TunnelMateApp {
                     TunnelStatus::Running | TunnelStatus::Stopped => self.notice = None,
                     TunnelStatus::Failed if !intervention => {
                         if let Some(message) = payload.message {
-                            self.notice = Some(message.into());
+                            self.notice = Some(self.language.runtime_message(&message).into());
                         }
                     }
                     _ => {}
@@ -187,7 +199,10 @@ impl TunnelMateApp {
             } => {
                 self.notice = Some(
                     if self.language == Language::Zh {
-                        format!("“{tunnel_name}”操作失败：{message}")
+                        format!(
+                            "“{tunnel_name}”操作失败：{}",
+                            self.language.runtime_message(&message)
+                        )
                     } else {
                         format!("Operation failed for “{tunnel_name}”: {message}")
                     }
@@ -273,7 +288,7 @@ impl TunnelMateApp {
                 let manager = self.manager.clone();
                 let sender = self.messages.clone();
                 self.runtime.spawn(async move {
-                    manager.lock().await.stop_all().await;
+                    TunnelManager::stop_all(manager).await;
                     let _ = sender.send(AppMessage::QuitReady).await;
                 });
             }

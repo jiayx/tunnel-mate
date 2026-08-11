@@ -1,4 +1,5 @@
 use crate::config::{ConfigStore, Tunnel};
+use ring::hmac;
 use russh::client::{self, Config, Handle, Msg};
 use russh::keys::agent::client::AgentClient;
 use russh::keys::agent::client::AgentStream;
@@ -64,24 +65,67 @@ impl client::Handler for TunnelClient {
         match self.known_hosts_policy {
             KnownHostsPolicy::TrustOnce => Ok(true),
             KnownHostsPolicy::TrustAndRemember => {
-                if !is_known_host_key(&self.host, self.port, server_public_key) {
-                    let _ = append_known_host(&self.host, self.port, server_public_key);
+                match check_known_host_key(&self.host, self.port, server_public_key) {
+                    HostKeyStatus::Trusted => Ok(true),
+                    HostKeyStatus::Unknown => {
+                        match append_known_host(&self.host, self.port, server_public_key) {
+                            Ok(()) => Ok(true),
+                            Err(message) => {
+                                self.set_host_key_error(message);
+                                Ok(false)
+                            }
+                        }
+                    }
+                    HostKeyStatus::Changed => {
+                        self.set_host_key_error(host_key_error(
+                            "HOST_KEY_CHANGED",
+                            &self.host,
+                            self.port,
+                            server_public_key,
+                        ));
+                        Ok(false)
+                    }
+                    HostKeyStatus::Revoked => {
+                        self.set_host_key_error(host_key_error(
+                            "HOST_KEY_REVOKED",
+                            &self.host,
+                            self.port,
+                            server_public_key,
+                        ));
+                        Ok(false)
+                    }
                 }
-                Ok(true)
             }
             KnownHostsPolicy::RequireKnown => {
-                if is_known_host_key(&self.host, self.port, server_public_key) {
-                    Ok(true)
-                } else {
-                    if let Ok(mut err) = self.host_key_error.lock() {
-                        *err = Some(format!(
-                            "HOST_KEY_NOT_TRUSTED|{}|{}|{}",
-                            self.host,
+                match check_known_host_key(&self.host, self.port, server_public_key) {
+                    HostKeyStatus::Trusted => Ok(true),
+                    HostKeyStatus::Unknown => {
+                        self.set_host_key_error(host_key_error(
+                            "HOST_KEY_NOT_TRUSTED",
+                            &self.host,
                             self.port,
-                            server_public_key.fingerprint(ssh_key::HashAlg::Sha256)
+                            server_public_key,
                         ));
+                        Ok(false)
                     }
-                    Ok(false)
+                    HostKeyStatus::Changed => {
+                        self.set_host_key_error(host_key_error(
+                            "HOST_KEY_CHANGED",
+                            &self.host,
+                            self.port,
+                            server_public_key,
+                        ));
+                        Ok(false)
+                    }
+                    HostKeyStatus::Revoked => {
+                        self.set_host_key_error(host_key_error(
+                            "HOST_KEY_REVOKED",
+                            &self.host,
+                            self.port,
+                            server_public_key,
+                        ));
+                        Ok(false)
+                    }
                 }
             }
         }
@@ -104,6 +148,14 @@ impl client::Handler for TunnelClient {
             originator_port,
         });
         Ok(())
+    }
+}
+
+impl TunnelClient {
+    fn set_host_key_error(&self, message: String) {
+        if let Ok(mut error) = self.host_key_error.lock() {
+            *error = Some(message);
+        }
     }
 }
 
@@ -195,15 +247,24 @@ impl SshSession {
                 .open_direct_tcpip_with_timeout(host.to_string(), port as u32, timeout_secs)
                 .await?;
             let stream = channel.into_stream();
-            let handle = client::connect_stream(config, stream, handler)
-                .await
-                .map_err(|e| {
-                    host_key_error
-                        .lock()
-                        .ok()
-                        .and_then(|err| err.clone())
-                        .unwrap_or_else(|| format!("SSH connection via Jump Host failed: {}", e))
-                })?;
+            let handle = tokio::time::timeout(
+                Duration::from_secs(timeout_secs.max(1)),
+                client::connect_stream(config, stream, handler),
+            )
+            .await
+            .map_err(|_| {
+                format!(
+                    "SSH connection via Jump Host to {}:{} timed out",
+                    host, port
+                )
+            })?
+            .map_err(|e| {
+                host_key_error
+                    .lock()
+                    .ok()
+                    .and_then(|err| err.clone())
+                    .unwrap_or_else(|| format!("SSH connection via Jump Host failed: {}", e))
+            })?;
             (handle, Some(jump_session))
         } else {
             let handle = tokio::time::timeout(
@@ -222,7 +283,12 @@ impl SshSession {
             (handle, None)
         };
 
-        authenticate_handle(&mut handle, user, identity_file, password, passphrase).await?;
+        tokio::time::timeout(
+            Duration::from_secs(timeout_secs.max(1)),
+            authenticate_handle(&mut handle, user, identity_file, password, passphrase),
+        )
+        .await
+        .map_err(|_| format!("SSH authentication for {}@{} timed out", user, host))??;
 
         Ok(Self {
             handle: Arc::new(Mutex::new(handle)),
@@ -244,9 +310,18 @@ impl SshSession {
             KnownHostsPolicy::TrustAndRemember,
             Arc::new(StdMutex::new(None)),
         );
-        let handle = client::connect(config, (host, port), handler)
-            .await
-            .map_err(|e| format!("Failed to trust host key: {}", e))?;
+        let timeout_secs = ConfigStore::new()
+            .load_config()
+            .map(|config| config.settings.connect_timeout as u64)
+            .unwrap_or(10)
+            .max(1);
+        let handle = tokio::time::timeout(
+            Duration::from_secs(timeout_secs),
+            client::connect(config, (host, port), handler),
+        )
+        .await
+        .map_err(|_| format!("Timed out while reading host key from {}:{}", host, port))?
+        .map_err(|e| format!("Failed to trust host key: {}", e))?;
         let _ = handle
             .disconnect(Disconnect::ByApplication, "Host key trusted", "en")
             .await;
@@ -296,22 +371,125 @@ impl SshSession {
     }
 }
 
-fn is_known_host_key(host: &str, port: u16, server_public_key: &ssh_key::PublicKey) -> bool {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HostKeyStatus {
+    Trusted,
+    Unknown,
+    Changed,
+    Revoked,
+}
+
+fn host_key_error(
+    kind: &str,
+    host: &str,
+    port: u16,
+    server_public_key: &ssh_key::PublicKey,
+) -> String {
+    format!(
+        "{}|{}|{}|{}",
+        kind,
+        host,
+        port,
+        server_public_key.fingerprint(ssh_key::HashAlg::Sha256)
+    )
+}
+
+fn check_known_host_key(
+    host: &str,
+    port: u16,
+    server_public_key: &ssh_key::PublicKey,
+) -> HostKeyStatus {
     let Some(path) = known_hosts_path() else {
-        return false;
+        return HostKeyStatus::Unknown;
     };
-    let Ok(entries) = KnownHosts::read_file(path) else {
-        return false;
+    let Ok(content) = fs::read_to_string(path) else {
+        return HostKeyStatus::Unknown;
     };
 
-    let host_patterns = known_host_names(host, port);
-    entries.into_iter().any(|entry| {
-        if entry.marker() == Some(&Marker::Revoked) {
-            return false;
+    let host_names = known_host_names(host, port);
+    let mut host_has_keys = false;
+    let mut matching_key_is_trusted = false;
+    let mut matching_key_is_revoked = false;
+    for entry in KnownHosts::new(&content).filter_map(Result::ok) {
+        if !known_host_patterns_match(entry.host_patterns(), &host_names) {
+            continue;
         }
-        entry.public_key() == server_public_key
-            && matches!(entry.host_patterns(), HostPatterns::Patterns(patterns) if patterns.iter().any(|pattern| host_patterns.iter().any(|host_pattern| pattern == host_pattern)))
-    })
+        if entry.marker() == Some(&Marker::CertAuthority) {
+            continue;
+        }
+        host_has_keys = true;
+        if entry.public_key() == server_public_key {
+            if entry.marker() == Some(&Marker::Revoked) {
+                matching_key_is_revoked = true;
+            } else {
+                matching_key_is_trusted = true;
+            }
+        }
+    }
+
+    if matching_key_is_revoked {
+        HostKeyStatus::Revoked
+    } else if matching_key_is_trusted {
+        HostKeyStatus::Trusted
+    } else if host_has_keys {
+        HostKeyStatus::Changed
+    } else {
+        HostKeyStatus::Unknown
+    }
+}
+
+fn known_host_patterns_match(patterns: &HostPatterns, host_names: &[String]) -> bool {
+    match patterns {
+        HostPatterns::HashedName { salt, hash } => host_names.iter().any(|host| {
+            let key = hmac::Key::new(hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY, salt);
+            hmac::verify(&key, host.as_bytes(), hash).is_ok()
+        }),
+        HostPatterns::Patterns(patterns) => {
+            let mut positive_match = false;
+            for pattern in patterns {
+                let (negated, pattern) = pattern
+                    .strip_prefix('!')
+                    .map_or((false, pattern.as_str()), |pattern| (true, pattern));
+                if host_names.iter().any(|host| wildcard_match(pattern, host)) {
+                    if negated {
+                        return false;
+                    }
+                    positive_match = true;
+                }
+            }
+            positive_match
+        }
+    }
+}
+
+fn wildcard_match(pattern: &str, value: &str) -> bool {
+    let pattern = pattern.to_ascii_lowercase().into_bytes();
+    let value = value.to_ascii_lowercase().into_bytes();
+    let mut previous = vec![false; value.len() + 1];
+    previous[0] = true;
+
+    for token in pattern {
+        let mut current = vec![false; value.len() + 1];
+        match token {
+            b'*' => {
+                current[0] = previous[0];
+                for index in 1..=value.len() {
+                    current[index] = previous[index] || current[index - 1];
+                }
+            }
+            b'?' => {
+                current[1..].copy_from_slice(&previous[..value.len()]);
+            }
+            literal => {
+                for index in 1..=value.len() {
+                    current[index] = previous[index - 1] && value[index - 1] == literal;
+                }
+            }
+        }
+        previous = current;
+    }
+
+    previous[value.len()]
 }
 
 fn append_known_host(
@@ -323,6 +501,12 @@ fn append_known_host(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create known_hosts directory: {}", e))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
+                .map_err(|e| format!("Failed to secure known_hosts directory: {}", e))?;
+        }
     }
     let host_name = known_host_names(host, port)
         .into_iter()
@@ -331,9 +515,14 @@ fn append_known_host(
     let public_key = server_public_key
         .to_openssh()
         .map_err(|e| format!("Failed to encode server public key: {}", e))?;
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
+    let mut options = fs::OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
         .open(&path)
         .map_err(|e| format!("Failed to open known_hosts: {}", e))?;
     writeln!(file, "{} {}", host_name, public_key)
@@ -569,5 +758,40 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(err, "PASSPHRASE_REQUIRED");
+    }
+
+    #[test]
+    fn known_host_patterns_support_wildcards_and_negation() {
+        let hosts = vec!["api.example.com".to_string()];
+        assert!(known_host_patterns_match(
+            &HostPatterns::Patterns(vec!["*.example.com".to_string()]),
+            &hosts
+        ));
+        assert!(!known_host_patterns_match(
+            &HostPatterns::Patterns(vec![
+                "*.example.com".to_string(),
+                "!api.example.com".to_string(),
+            ]),
+            &hosts
+        ));
+    }
+
+    #[test]
+    fn known_host_patterns_support_openssh_hashed_names() {
+        let salt = vec![7; 20];
+        let key = hmac::Key::new(hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY, &salt);
+        let tag = hmac::sign(&key, b"[example.com]:2222");
+        let mut hash = [0u8; 20];
+        hash.copy_from_slice(tag.as_ref());
+        let pattern = HostPatterns::HashedName { salt, hash };
+
+        assert!(known_host_patterns_match(
+            &pattern,
+            &["[example.com]:2222".to_string()]
+        ));
+        assert!(!known_host_patterns_match(
+            &pattern,
+            &["[example.com]:22".to_string()]
+        ));
     }
 }

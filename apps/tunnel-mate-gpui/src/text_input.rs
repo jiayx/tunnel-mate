@@ -692,6 +692,7 @@ impl Render for TextInput {
         div()
             .key_context("TunnelTextInput")
             .track_focus(&self.focus_handle(cx))
+            .tab_index(0)
             .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))

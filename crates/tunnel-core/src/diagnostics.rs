@@ -1,8 +1,9 @@
 use crate::config::{Endpoint, ForwardSpec, Tunnel};
 use crate::ssh::engine::{ConnectOptions, KnownHostsPolicy, SshSession};
 use serde::{Deserialize, Serialize};
-use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::time::Duration;
+use tokio::net::{lookup_host, TcpListener, TcpStream};
+use tokio::time::timeout;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,7 +57,7 @@ pub async fn run_diagnostics(
                 },
             ));
         } else {
-            match TcpListener::bind(format!("{}:{}", bind_target.host, bind_target.port)) {
+            match TcpListener::bind((bind_target.host.as_str(), bind_target.port)).await {
                 Ok(_) => steps.push(success(
                     label(language, "监听端口", "Listener availability"),
                     if language == DiagnosticLanguage::Chinese {
@@ -97,40 +98,23 @@ pub async fn run_diagnostics(
     }
 
     if let Some(forward_target) = resolve_forward_tcp_check(tunnel) {
-        let addr =
-            match format!("{}:{}", forward_target.host, forward_target.port).to_socket_addrs() {
-                Ok(mut addrs) => {
-                    if let Some(addr) = addrs.next() {
-                        steps.push(success(
-                            format!(
-                                "{}{}",
-                                forward_target.prefix,
-                                label(language, "DNS 解析", "DNS resolution")
-                            ),
-                            if language == DiagnosticLanguage::Chinese {
-                                format!("已将 {} 解析为 {}", forward_target.host, addr.ip())
-                            } else {
-                                format!("Resolved {} to {}", forward_target.host, addr.ip())
-                            },
-                        ));
-                        addr
-                    } else {
-                        steps.push(error(
-                            format!(
-                                "{}{}",
-                                forward_target.prefix,
-                                label(language, "DNS 解析", "DNS resolution")
-                            ),
-                            if language == DiagnosticLanguage::Chinese {
-                                format!("{} 没有解析到任何 IP 地址", forward_target.host)
-                            } else {
-                                format!("Resolved {} to no IP addresses", forward_target.host)
-                            },
-                        ));
-                        return steps;
-                    }
-                }
-                Err(e) => {
+        let addr = match lookup_host((forward_target.host.as_str(), forward_target.port)).await {
+            Ok(mut addrs) => {
+                if let Some(addr) = addrs.next() {
+                    steps.push(success(
+                        format!(
+                            "{}{}",
+                            forward_target.prefix,
+                            label(language, "DNS 解析", "DNS resolution")
+                        ),
+                        if language == DiagnosticLanguage::Chinese {
+                            format!("已将 {} 解析为 {}", forward_target.host, addr.ip())
+                        } else {
+                            format!("Resolved {} to {}", forward_target.host, addr.ip())
+                        },
+                    ));
+                    addr
+                } else {
                     steps.push(error(
                         format!(
                             "{}{}",
@@ -138,17 +122,33 @@ pub async fn run_diagnostics(
                             label(language, "DNS 解析", "DNS resolution")
                         ),
                         if language == DiagnosticLanguage::Chinese {
-                            format!("无法解析主机名 {}：{}", forward_target.host, e)
+                            format!("{} 没有解析到任何 IP 地址", forward_target.host)
                         } else {
-                            format!("Failed to resolve hostname {}: {}", forward_target.host, e)
+                            format!("Resolved {} to no IP addresses", forward_target.host)
                         },
                     ));
                     return steps;
                 }
-            };
+            }
+            Err(e) => {
+                steps.push(error(
+                    format!(
+                        "{}{}",
+                        forward_target.prefix,
+                        label(language, "DNS 解析", "DNS resolution")
+                    ),
+                    if language == DiagnosticLanguage::Chinese {
+                        format!("无法解析主机名 {}：{}", forward_target.host, e)
+                    } else {
+                        format!("Failed to resolve hostname {}: {}", forward_target.host, e)
+                    },
+                ));
+                return steps;
+            }
+        };
 
-        match TcpStream::connect_timeout(&addr, Duration::from_secs(5)) {
-            Ok(_) => steps.push(success(
+        match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
+            Ok(Ok(_)) => steps.push(success(
                 format!(
                     "{}{}",
                     forward_target.prefix,
@@ -163,7 +163,7 @@ pub async fn run_diagnostics(
                     )
                 },
             )),
-            Err(e) => {
+            Ok(Err(e)) => {
                 steps.push(error(
                     format!(
                         "{}{}",
@@ -184,11 +184,29 @@ pub async fn run_diagnostics(
                 ));
                 return steps;
             }
+            Err(_) => {
+                steps.push(error(
+                    format!(
+                        "{}{}",
+                        forward_target.prefix,
+                        label(language, "TCP 连接", "TCP connection")
+                    ),
+                    if language == DiagnosticLanguage::Chinese {
+                        format!("连接 {}:{} 超时", forward_target.host, forward_target.port)
+                    } else {
+                        format!(
+                            "Connection to {}:{} timed out",
+                            forward_target.host, forward_target.port
+                        )
+                    },
+                ));
+                return steps;
+            }
         }
     }
 
     let target = resolve_diagnostic_target(tunnel, all_tunnels);
-    let addr = match format!("{}:{}", target.host, target.port).to_socket_addrs() {
+    let addr = match lookup_host((target.host.as_str(), target.port)).await {
         Ok(mut addrs) => {
             if let Some(addr) = addrs.next() {
                 steps.push(success(
@@ -237,8 +255,8 @@ pub async fn run_diagnostics(
         }
     };
 
-    match TcpStream::connect_timeout(&addr, Duration::from_secs(5)) {
-        Ok(_) => steps.push(success(
+    match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
+        Ok(Ok(_)) => steps.push(success(
             format!(
                 "{}{}",
                 target.prefix,
@@ -253,7 +271,7 @@ pub async fn run_diagnostics(
                 )
             },
         )),
-        Err(e) => {
+        Ok(Err(e)) => {
             steps.push(error(
                 format!(
                     "{}{}",
@@ -271,17 +289,33 @@ pub async fn run_diagnostics(
             ));
             return steps;
         }
+        Err(_) => {
+            steps.push(error(
+                format!(
+                    "{}{}",
+                    target.prefix,
+                    label(language, "TCP 连接", "TCP connection")
+                ),
+                if language == DiagnosticLanguage::Chinese {
+                    format!("连接 {}:{} 超时", target.host, target.port)
+                } else {
+                    format!("Connection to {}:{} timed out", target.host, target.port)
+                },
+            ));
+            return steps;
+        }
     }
 
+    let jump_config = resolve_jump_config(tunnel, all_tunnels);
     match SshSession::connect(ConnectOptions {
-        host: &target.host,
-        port: target.port,
-        user: &target.user,
-        identity_file: target.identity_file.as_deref(),
-        password: target.password.as_deref(),
+        host: &tunnel.ssh_host,
+        port: tunnel.ssh_port,
+        user: &tunnel.ssh_user,
+        identity_file: tunnel.ssh_identity_file.as_deref(),
+        password: tunnel.ssh_password.as_deref(),
         passphrase,
         known_hosts_policy: KnownHostsPolicy::TrustOnce,
-        jump_host_config: None,
+        jump_host_config: jump_config.as_ref(),
     })
     .await
     {
@@ -412,6 +446,44 @@ fn resolve_diagnostic_target(tunnel: &Tunnel, all_tunnels: &[Tunnel]) -> Diagnos
             prefix: "",
         }
     }
+}
+
+fn resolve_jump_config(tunnel: &Tunnel, all_tunnels: &[Tunnel]) -> Option<Tunnel> {
+    if !tunnel.jump_host_enabled {
+        return None;
+    }
+    if let Some(jump_host_id) = tunnel.jump_host_id.as_deref() {
+        if let Some(jump_host) = all_tunnels
+            .iter()
+            .find(|candidate| candidate.id == jump_host_id)
+        {
+            return Some(jump_host.clone());
+        }
+    }
+
+    Some(Tunnel {
+        id: format!("{}_diagnostic_jump", tunnel.id),
+        name: tunnel.jump_host.clone().unwrap_or_default(),
+        description: None,
+        group_id: None,
+        ssh_host: tunnel.jump_host.clone().unwrap_or_default(),
+        ssh_port: tunnel.jump_port.unwrap_or(22),
+        ssh_user: tunnel.jump_user.clone().unwrap_or_default(),
+        ssh_identity_file: tunnel.jump_identity_file.clone(),
+        ssh_password: tunnel.jump_password.clone(),
+        jump_host_enabled: false,
+        jump_host_id: None,
+        jump_host: None,
+        jump_port: None,
+        jump_user: None,
+        jump_identity_file: None,
+        jump_password: None,
+        forward: tunnel.forward.clone(),
+        start_with_app: false,
+        auto_reconnect: false,
+        retry_count: 0,
+        retry_interval: tunnel.retry_interval,
+    })
 }
 
 fn success(name: impl Into<String>, message: impl Into<String>) -> DiagnosticStep {

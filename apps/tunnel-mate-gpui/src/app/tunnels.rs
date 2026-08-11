@@ -206,7 +206,7 @@ impl TunnelMateApp {
                 .into(),
             );
             self.runtime.spawn(async move {
-                if let Err(message) = manager.lock().await.stop_tunnel(&tunnel.id).await {
+                if let Err(message) = TunnelManager::stop_tunnel(manager, &tunnel.id).await {
                     let _ = sender
                         .send(AppMessage::OperationError {
                             tunnel_name,
@@ -278,9 +278,29 @@ impl TunnelMateApp {
         cx.notify();
     }
 
+    pub(super) fn copy_prompted_fingerprint(&self, cx: &mut Context<Self>) {
+        if let Some(AuthPrompt::HostKey { fingerprint, .. }) = &self.auth_prompt {
+            cx.write_to_clipboard(ClipboardItem::new_string(fingerprint.clone()));
+        }
+    }
+
+    pub(super) fn copy_known_host_cleanup(&self, cx: &mut Context<Self>) {
+        if let Some(AuthPrompt::HostKey { host, port, .. }) = &self.auth_prompt {
+            let target = if *port == 22 {
+                host.clone()
+            } else {
+                format!("[{host}]:{port}")
+            };
+            cx.write_to_clipboard(ClipboardItem::new_string(format!(
+                "ssh-keygen -R '{target}'"
+            )));
+        }
+    }
+
     pub(super) fn trust_prompted_host(&mut self, cx: &mut Context<Self>) {
         let Some(AuthPrompt::HostKey {
             tunnel_id,
+            issue: HostKeyIssue::Unknown,
             host,
             port,
             ..

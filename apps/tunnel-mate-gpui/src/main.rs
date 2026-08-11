@@ -1,3 +1,4 @@
+mod i18n;
 mod system;
 mod text_input;
 
@@ -26,6 +27,7 @@ use tunnel_core::{
     Tunnel, TunnelManager, TunnelStatus,
 };
 
+use i18n::Language;
 use text_input::TextInput;
 
 const fn color(hex: u32) -> Rgba {
@@ -94,12 +96,6 @@ const SUCCESS: Rgba = color(0x63cda7);
 const WARNING: Rgba = color(0xd2a85e);
 const DANGER: Rgba = color(0xdc747c);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Language {
-    Zh,
-    En,
-}
-
 actions!(
     tunnel_mate,
     [
@@ -114,31 +110,6 @@ actions!(
         BringAllToFront,
     ]
 );
-
-impl Language {
-    fn system() -> Self {
-        let locale = std::env::var("TUNNEL_MATE_LANG")
-            .ok()
-            .unwrap_or_else(|| sys_locale::get_locale().unwrap_or_default());
-        Self::from_locale(&locale)
-    }
-
-    fn from_locale(locale: &str) -> Self {
-        if locale.to_ascii_lowercase().starts_with("zh") {
-            Self::Zh
-        } else {
-            Self::En
-        }
-    }
-
-    fn pick(self, zh: &'static str, en: &'static str) -> &'static str {
-        if self == Self::Zh {
-            zh
-        } else {
-            en
-        }
-    }
-}
 
 fn close_to_tray_description(language: Language) -> &'static str {
     #[cfg(target_os = "macos")]
@@ -272,6 +243,7 @@ struct GroupForm {
 enum AuthPrompt {
     HostKey {
         tunnel_id: String,
+        issue: HostKeyIssue,
         host: String,
         port: u16,
         fingerprint: String,
@@ -280,6 +252,13 @@ enum AuthPrompt {
         tunnel_id: String,
         input: Entity<TextInput>,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HostKeyIssue {
+    Unknown,
+    Changed,
+    Revoked,
 }
 
 impl TunnelForm {
@@ -466,6 +445,8 @@ struct TunnelMateApp {
 
 #[path = "app/actions.rs"]
 mod actions;
+#[path = "app/backups.rs"]
+mod backups;
 #[path = "app/dialogs.rs"]
 mod dialogs;
 #[path = "app/lifecycle.rs"]
@@ -528,13 +509,21 @@ impl Render for TunnelMateApp {
     }
 }
 
-fn parse_host_key_prompt(message: &str) -> Option<(String, u16, String)> {
-    let value = message.strip_prefix("HOST_KEY_NOT_TRUSTED|")?;
+fn parse_host_key_prompt(message: &str) -> Option<(HostKeyIssue, String, u16, String)> {
+    let (issue, value) = if let Some(value) = message.strip_prefix("HOST_KEY_NOT_TRUSTED|") {
+        (HostKeyIssue::Unknown, value)
+    } else if let Some(value) = message.strip_prefix("HOST_KEY_CHANGED|") {
+        (HostKeyIssue::Changed, value)
+    } else if let Some(value) = message.strip_prefix("HOST_KEY_REVOKED|") {
+        (HostKeyIssue::Revoked, value)
+    } else {
+        return None;
+    };
     let mut parts = value.splitn(3, '|');
     let host = parts.next()?.to_string();
     let port = parts.next()?.parse().ok()?;
     let fingerprint = parts.next()?.to_string();
-    (!host.is_empty() && !fingerprint.is_empty()).then_some((host, port, fingerprint))
+    (!host.is_empty() && !fingerprint.is_empty()).then_some((issue, host, port, fingerprint))
 }
 
 #[cfg(target_os = "macos")]
@@ -759,13 +748,18 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_host_key_prompt, ssh_host_matches, Language, SshHostConfig};
+    use super::{parse_host_key_prompt, ssh_host_matches, HostKeyIssue, Language, SshHostConfig};
 
     #[test]
     fn parses_host_key_intervention_message() {
         assert_eq!(
             parse_host_key_prompt("HOST_KEY_NOT_TRUSTED|example.com|2222|SHA256:abc"),
-            Some(("example.com".to_string(), 2222, "SHA256:abc".to_string()))
+            Some((
+                HostKeyIssue::Unknown,
+                "example.com".to_string(),
+                2222,
+                "SHA256:abc".to_string()
+            ))
         );
         assert!(parse_host_key_prompt("ordinary error").is_none());
     }

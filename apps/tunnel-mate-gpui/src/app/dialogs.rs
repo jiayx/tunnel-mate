@@ -699,12 +699,17 @@ impl TunnelMateApp {
     pub(super) fn render_auth_prompt(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let (title, body) = match self.auth_prompt.as_ref().expect("auth prompt") {
             AuthPrompt::HostKey {
+                issue,
                 host,
                 port,
                 fingerprint,
                 ..
             } => (
-                self.language.pick("信任 SSH 主机密钥", "Trust SSH host key"),
+                match issue {
+                    HostKeyIssue::Unknown => self.language.pick("信任 SSH 主机密钥", "Trust SSH host key"),
+                    HostKeyIssue::Changed => self.language.pick("SSH 主机密钥已变化", "SSH host key changed"),
+                    HostKeyIssue::Revoked => self.language.pick("SSH 主机密钥已撤销", "SSH host key revoked"),
+                },
                 div()
                     .flex()
                     .flex_col()
@@ -713,12 +718,13 @@ impl TunnelMateApp {
                         div()
                             .text_size(px(11.0))
                             .text_color(MUTED)
-                            .child(if self.language == Language::Zh {
-                                format!("首次连接 {host}:{port}，请核对指纹后再信任。")
-                            } else {
-                                format!(
-                                    "First connection to {host}:{port}. Verify the fingerprint before trusting it."
-                                )
+                            .child(match (issue, self.language) {
+                                (HostKeyIssue::Unknown, Language::Zh) => format!("首次连接 {host}:{port}，请核对指纹后再信任。"),
+                                (HostKeyIssue::Unknown, Language::En) => format!("First connection to {host}:{port}. Verify the fingerprint before trusting it."),
+                                (HostKeyIssue::Changed, Language::Zh) => format!("{host}:{port} 的主机密钥与已保存记录不一致。为防止中间人攻击，应用不会自动覆盖；确认服务器确实更换密钥后，请先运行 ssh-keygen -R {host}。"),
+                                (HostKeyIssue::Changed, Language::En) => format!("The key for {host}:{port} differs from the saved key. It will not be overwritten automatically. After independently verifying the change, run ssh-keygen -R {host}."),
+                                (HostKeyIssue::Revoked, Language::Zh) => format!("{host}:{port} 的密钥在 known_hosts 中被标记为已撤销。请联系服务器管理员核实，应用已阻止连接。"),
+                                (HostKeyIssue::Revoked, Language::En) => format!("The key for {host}:{port} is marked as revoked in known_hosts. Contact the server administrator; the connection was blocked."),
                             }),
                     )
                     .child(
@@ -733,6 +739,7 @@ impl TunnelMateApp {
                     .child(
                         div()
                             .flex()
+                            .flex_wrap()
                             .justify_end()
                             .gap(px(8.0))
                             .child(
@@ -748,10 +755,49 @@ impl TunnelMateApp {
                                     .cursor_pointer()
                                     .on_mouse_up(
                                         MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| this.copy_prompted_fingerprint(cx)),
+                                    )
+                                    .child(self.language.pick("复制指纹", "Copy fingerprint")),
+                            )
+                            .when(*issue == HostKeyIssue::Changed, |row| row.child(
+                                div()
+                                    .h(px(34.0))
+                                    .px(px(12.0))
+                                    .flex()
+                                    .items_center()
+                                    .rounded(px(8.0))
+                                    .border_1()
+                                    .border_color(BORDER)
+                                    .text_size(px(11.0))
+                                    .cursor_pointer()
+                                    .on_mouse_up(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| this.copy_known_host_cleanup(cx)),
+                                    )
+                                    .child(self.language.pick("复制清理命令", "Copy cleanup command")),
+                            ))
+                            .child(
+                                div()
+                                    .h(px(34.0))
+                                    .px(px(12.0))
+                                    .flex()
+                                    .items_center()
+                                    .rounded(px(8.0))
+                                    .border_1()
+                                    .border_color(BORDER)
+                                    .text_size(px(11.0))
+                                    .cursor_pointer()
+                                    .on_mouse_up(
+                                        MouseButton::Left,
                                         cx.listener(|this, _, _, cx| this.close_auth_prompt(cx)),
                                     )
-                                    .child(self.language.pick("取消", "Cancel")),
+                                    .child(if *issue == HostKeyIssue::Unknown {
+                                        self.language.pick("取消", "Cancel")
+                                    } else {
+                                        self.language.pick("关闭", "Close")
+                                    }),
                             )
+                            .when(*issue == HostKeyIssue::Unknown, |row| row
                             .child(
                                 div()
                                     .h(px(34.0))
@@ -766,8 +812,8 @@ impl TunnelMateApp {
                                         MouseButton::Left,
                                         cx.listener(|this, _, _, cx| this.trust_prompted_host(cx)),
                                     )
-                                    .child(self.language.pick("信任并重试", "Trust and retry")),
-                            ),
+                                    .child(self.language.pick("信任并连接", "Trust and connect")),
+                            )),
                     ),
             ),
             AuthPrompt::Passphrase { input, .. } => (

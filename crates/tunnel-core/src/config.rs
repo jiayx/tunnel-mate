@@ -342,24 +342,38 @@ impl ConfigStore {
         if let Some(parent) = config_path.parent() {
             fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create config directory: {}", e))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
+                    .map_err(|e| format!("Failed to secure config directory: {}", e))?;
+            }
         }
 
         let content = serde_json::to_string_pretty(config)
             .map_err(|e| format!("Failed to serialize config: {}", e))?;
 
-        // Atomic write
-        let tmp_path = config_path.with_extension("tmp");
+        // NamedTempFile::persist replaces an existing destination on Windows as
+        // well as Unix, unlike std::fs::rename on Windows. Keeping the temporary
+        // file in the destination directory also keeps the replace atomic.
+        let parent = config_path
+            .parent()
+            .ok_or_else(|| "Config path has no parent directory".to_string())?;
+        let mut file = tempfile::NamedTempFile::new_in(parent)
+            .map_err(|e| format!("Failed to create temp config file: {}", e))?;
+        file.write_all(content.as_bytes())
+            .map_err(|e| format!("Failed to write config data: {}", e))?;
+        file.as_file()
+            .sync_all()
+            .map_err(|e| format!("Failed to sync config data: {}", e))?;
+        file.persist(&config_path)
+            .map_err(|e| format!("Failed to commit config file: {}", e.error))?;
+        #[cfg(unix)]
         {
-            let mut file = fs::File::create(&tmp_path)
-                .map_err(|e| format!("Failed to create temp config file: {}", e))?;
-            file.write_all(content.as_bytes())
-                .map_err(|e| format!("Failed to write config data: {}", e))?;
-            file.sync_all()
-                .map_err(|e| format!("Failed to sync config data: {}", e))?;
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&config_path, fs::Permissions::from_mode(0o600))
+                .map_err(|e| format!("Failed to secure config file: {}", e))?;
         }
-
-        fs::rename(&tmp_path, &config_path)
-            .map_err(|e| format!("Failed to commit config file: {}", e))?;
 
         Ok(())
     }
@@ -615,5 +629,19 @@ mod tests {
         assert!(loaded.tunnels.is_empty());
         assert!(store.get_config_path().exists());
         assert!(!store.get_config_path().with_extension("tmp").exists());
+    }
+
+    #[test]
+    fn isolated_store_atomically_replaces_existing_config() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = ConfigStore::from_base_path(directory.path().to_path_buf());
+        let mut config = AppConfig::default();
+
+        store.save_config(&config).unwrap();
+        config.settings.connect_timeout = 42;
+        store.save_config(&config).unwrap();
+
+        let loaded = store.load_config().unwrap();
+        assert_eq!(loaded.settings.connect_timeout, 42);
     }
 }
