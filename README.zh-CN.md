@@ -59,7 +59,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-CI 还会运行 RustSec 依赖安全审计。Dependabot 每月检查 Cargo 和工作流依赖，GitHub Actions 均固定到不可变的提交 SHA。
+CI 还会运行 RustSec 依赖安全审计。由于 russh 的 RSA-SHA2 支持依赖 RustCrypto RSA，且上游尚无修复版本，目前仅精确忽略 `RUSTSEC-2023-0071`；其他漏洞仍会阻止发布。Dependabot 每月检查 Cargo 和工作流依赖，GitHub Actions 均固定到不可变的提交 SHA。
 
 ## 打包与发布
 

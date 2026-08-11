@@ -737,25 +737,34 @@ impl TunnelMateApp {
         cx.notify();
     }
 
-    pub(super) fn select_private_key(&mut self, cx: &mut Context<Self>) {
-        let receiver = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some("选择私钥".into()),
-        });
+    pub(super) fn select_private_key(&mut self, target: PrivateKeyTarget, cx: &mut Context<Self>) {
+        let mut dialog = rfd::AsyncFileDialog::new().set_title(
+            self.language
+                .pick("选择 SSH 私钥", "Choose an SSH private key"),
+        );
+        if let Some(directory) = default_ssh_directory() {
+            dialog = dialog.set_directory(directory);
+        }
         let sender = self.messages.clone();
         cx.spawn(async move |_, _| {
-            if let Ok(Ok(Some(paths))) = receiver.await {
-                if let Some(path) = paths.into_iter().next() {
-                    let _ = sender
-                        .send(AppMessage::PrivateKeySelected(
-                            path.to_string_lossy().into_owned(),
-                        ))
-                        .await;
-                }
+            if let Some(file) = dialog.pick_file().await {
+                let _ = sender
+                    .send(AppMessage::PrivateKeySelected {
+                        target,
+                        path: file.path().to_string_lossy().into_owned(),
+                    })
+                    .await;
             }
         })
         .detach();
     }
+}
+
+fn default_ssh_directory() -> Option<std::path::PathBuf> {
+    // dirs::home_dir maps to USERPROFILE on Windows and the user's home
+    // directory on macOS/Linux. Open ~/.ssh when present, otherwise fall back
+    // to the home directory so every platform receives a valid initial path.
+    let home = dirs::home_dir()?;
+    let ssh = home.join(".ssh");
+    Some(if ssh.is_dir() { ssh } else { home })
 }

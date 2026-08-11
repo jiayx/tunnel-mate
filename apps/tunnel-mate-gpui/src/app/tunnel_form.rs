@@ -657,7 +657,10 @@ impl TunnelMateApp {
                                                     .on_mouse_up(
                                                         MouseButton::Left,
                                                         cx.listener(|this, _, _, cx| {
-                                                            this.select_private_key(cx)
+                                                            this.select_private_key(
+                                                                PrivateKeyTarget::Primary,
+                                                                cx,
+                                                            )
                                                         }),
                                                     )
                                                     .child(self.language.pick("选择…", "Choose…")),
@@ -833,10 +836,51 @@ impl TunnelMateApp {
                                                             ),
                                                         )),
                                                 )
-                                                .child(Self::form_field(
-                                                    self.language.pick("私钥文件", "Private key"),
-                                                    form.jump_identity_file.clone(),
-                                                ))
+                                                .child(
+                                                    div()
+                                                        .flex()
+                                                        .items_end()
+                                                        .gap(px(8.0))
+                                                        .child(div().flex_grow(1.0).child(
+                                                            Self::form_field(
+                                                                self.language.pick(
+                                                                    "私钥文件",
+                                                                    "Private key",
+                                                                ),
+                                                                form.jump_identity_file.clone(),
+                                                            ),
+                                                        ))
+                                                        .child(
+                                                            div()
+                                                                .h(px(38.0))
+                                                                .px(px(11.0))
+                                                                .flex()
+                                                                .items_center()
+                                                                .rounded(px(8.0))
+                                                                .border_1()
+                                                                .border_color(BORDER)
+                                                                .text_size(px(10.0))
+                                                                .text_color(MUTED)
+                                                                .cursor_pointer()
+                                                                .on_mouse_up(
+                                                                    MouseButton::Left,
+                                                                    cx.listener(
+                                                                        |this, _, _, cx| {
+                                                                            this.select_private_key(
+                                                                                PrivateKeyTarget::JumpHost,
+                                                                                cx,
+                                                                            )
+                                                                        },
+                                                                    ),
+                                                                )
+                                                                .child(
+                                                                    self.language.pick(
+                                                                        "选择…",
+                                                                        "Choose…",
+                                                                    ),
+                                                                ),
+                                                        ),
+                                                )
                                                 .child(Self::form_field(
                                                     self.language.pick("密码", "Password"),
                                                     form.jump_password.clone(),

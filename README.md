@@ -97,8 +97,11 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-CI also runs a RustSec dependency audit. Dependabot checks Cargo and workflow
-dependencies monthly; workflow actions are pinned to immutable commit SHAs.
+CI also runs a RustSec dependency audit. `RUSTSEC-2023-0071` is narrowly ignored
+because russh's RSA-SHA2 support depends on RustCrypto RSA and upstream has no
+patched release yet; all other vulnerabilities still block releases. Dependabot
+checks Cargo and workflow dependencies monthly; workflow actions are pinned to
+immutable commit SHAs.
 
 ## Packaging and releases
 

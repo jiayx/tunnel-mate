@@ -176,7 +176,10 @@ enum AppMessage {
         message: String,
     },
     FileOperation(String),
-    PrivateKeySelected(String),
+    PrivateKeySelected {
+        target: PrivateKeyTarget,
+        path: String,
+    },
     Tray(String),
     QuitReady,
     HostTrusted(String),
@@ -198,6 +201,12 @@ enum SettingToggle {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SshPickerTarget {
+    Primary,
+    JumpHost,
+}
+
+#[derive(Clone, Copy)]
+enum PrivateKeyTarget {
     Primary,
     JumpHost,
 }

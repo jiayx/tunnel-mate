@@ -301,10 +301,13 @@ impl TunnelMateApp {
                 );
             }
             AppMessage::FileOperation(message) => self.notice = Some(message.into()),
-            AppMessage::PrivateKeySelected(path) => {
+            AppMessage::PrivateKeySelected { target, path } => {
                 if let Some(form) = &self.form {
-                    form.identity_file
-                        .update(cx, |input, cx| input.set_value(path, cx));
+                    let input = match target {
+                        PrivateKeyTarget::Primary => &form.identity_file,
+                        PrivateKeyTarget::JumpHost => &form.jump_identity_file,
+                    };
+                    input.update(cx, |input, cx| input.set_value(path, cx));
                 }
             }
             AppMessage::Tray(id) if id == "show" => {
