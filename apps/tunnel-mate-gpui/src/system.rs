@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 use std::env;
+use std::path::PathBuf;
 
 use auto_launcher::AutoLaunchBuilder;
+#[cfg(target_os = "windows")]
+use auto_launcher::WindowsEnableMode;
 use image::GenericImageView;
 use tray_icon::menu::{IconMenuItem, Menu, MenuEvent, MenuItem, NativeIcon, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
@@ -9,28 +12,66 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
 use tunnel_core::{Tunnel, TunnelStatus};
 
+#[cfg(target_os = "macos")]
+const AUTOSTART_NAME: &str = "com.jiayx.tunnel-mate";
+#[cfg(not(target_os = "macos"))]
+const AUTOSTART_NAME: &str = "Tunnel Mate";
+
 pub fn sync_autostart(enabled: bool, start_minimized: bool) -> Result<(), String> {
-    let executable = env::current_exe().map_err(|error| format!("无法确定应用路径：{error}"))?;
+    let executable = autostart_executable()?;
     let executable = executable
         .to_str()
         .ok_or_else(|| "应用路径不是有效的 UTF-8".to_string())?;
     let mut builder = AutoLaunchBuilder::new();
-    builder.set_app_name("Tunnel Mate").set_app_path(executable);
+    builder
+        .set_app_name(AUTOSTART_NAME)
+        .set_app_path(executable);
+
+    #[cfg(target_os = "macos")]
+    builder.set_bundle_identifiers(&[AUTOSTART_NAME]);
+    #[cfg(target_os = "windows")]
+    builder.set_windows_enable_mode(WindowsEnableMode::CurrentUser);
+
     if start_minimized {
         builder.set_args(&["--minimized"]);
     }
     let launcher = builder
         .build()
         .map_err(|error| format!("无法配置开机启动：{error}"))?;
+
     if enabled {
         launcher
             .enable()
-            .map_err(|error| format!("启用开机启动失败：{error}"))
+            .map_err(|error| format!("启用开机启动失败：{error}"))?;
     } else {
         launcher
             .disable()
-            .map_err(|error| format!("关闭开机启动失败：{error}"))
+            .map_err(|error| format!("关闭开机启动失败：{error}"))?;
     }
+
+    let actual = launcher
+        .is_enabled()
+        .map_err(|error| format!("检查开机启动状态失败：{error}"))?;
+    if actual != enabled {
+        return Err(if enabled {
+            "系统未能启用开机启动，请检查登录项权限后重试".to_string()
+        } else {
+            "系统未能关闭开机启动，请检查登录项权限后重试".to_string()
+        });
+    }
+
+    Ok(())
+}
+
+fn autostart_executable() -> Result<PathBuf, String> {
+    // AppImage runs from a temporary mount. Registering current_exe() would
+    // leave an invalid path after the current session ends.
+    #[cfg(target_os = "linux")]
+    if let Some(appimage) = env::var_os("APPIMAGE").filter(|path| !path.is_empty()) {
+        return Ok(PathBuf::from(appimage));
+    }
+
+    env::current_exe().map_err(|error| format!("无法确定应用路径：{error}"))
 }
 
 pub fn install_tray_event_handler(callback: impl Fn(String) + Send + Sync + 'static) {
