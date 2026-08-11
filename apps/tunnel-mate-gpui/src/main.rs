@@ -514,10 +514,11 @@ fn parse_host_key_prompt(message: &str) -> Option<(HostKeyIssue, String, u16, St
         (HostKeyIssue::Unknown, value)
     } else if let Some(value) = message.strip_prefix("HOST_KEY_CHANGED|") {
         (HostKeyIssue::Changed, value)
-    } else if let Some(value) = message.strip_prefix("HOST_KEY_REVOKED|") {
-        (HostKeyIssue::Revoked, value)
     } else {
-        return None;
+        (
+            HostKeyIssue::Revoked,
+            message.strip_prefix("HOST_KEY_REVOKED|")?,
+        )
     };
     let mut parts = value.splitn(3, '|');
     let host = parts.next()?.to_string();
