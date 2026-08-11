@@ -368,6 +368,68 @@ jobs:
           if ([BitConverter]::ToUInt16($portableBytes, $portablePeOffset + 92) -ne 2) {
             throw "Portable app is not using the Windows GUI subsystem"
           }
+
+          Add-Type @"
+          using System;
+          using System.Runtime.InteropServices;
+
+          public static class PeResources
+          {
+              private delegate bool EnumResourceNameCallback(
+                  IntPtr module,
+                  IntPtr resourceType,
+                  IntPtr resourceName,
+                  IntPtr parameter);
+
+              [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+              private static extern IntPtr LoadLibraryEx(
+                  string fileName,
+                  IntPtr file,
+                  uint flags);
+
+              [DllImport("kernel32.dll", EntryPoint = "EnumResourceNamesW", SetLastError = true)]
+              private static extern bool EnumResourceNames(
+                  IntPtr module,
+                  IntPtr resourceType,
+                  EnumResourceNameCallback callback,
+                  IntPtr parameter);
+
+              [DllImport("kernel32.dll", SetLastError = true)]
+              private static extern bool FreeLibrary(IntPtr module);
+
+              public static bool HasGroupIcon(string path)
+              {
+                  const uint LoadLibraryAsDataFile = 0x00000002;
+                  const int GroupIconResourceType = 14;
+
+                  IntPtr module = LoadLibraryEx(path, IntPtr.Zero, LoadLibraryAsDataFile);
+                  if (module == IntPtr.Zero)
+                  {
+                      throw new InvalidOperationException("Could not inspect Windows resources");
+                  }
+
+                  bool found = false;
+                  EnumResourceNameCallback callback = delegate
+                  {
+                      found = true;
+                      return false;
+                  };
+
+                  EnumResourceNames(
+                      module,
+                      new IntPtr(GroupIconResourceType),
+                      callback,
+                      IntPtr.Zero);
+                  FreeLibrary(module);
+                  return found;
+              }
+          }
+          "@
+
+          if (-not [PeResources]::HasGroupIcon($portableExe.FullName)) {
+            throw "Portable app does not contain a Windows application icon resource"
+          }
+
           if ('${{ steps.windows-signing.outputs.configured }}' -eq 'true') {
             foreach ($package in @($msi, $installer, $portableExe)) {
               $signature = Get-AuthenticodeSignature $package.FullName
