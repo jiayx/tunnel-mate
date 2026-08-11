@@ -99,7 +99,8 @@ jobs:
             platform: macos
             arch: aarch64
             expected_arch: arm64
-          - os: macos-15-intel
+          # Build the Intel binary on the faster Apple Silicon runner.
+          - os: macos-15
             target: x86_64-apple-darwin
             formats: dmg
             platform: macos
