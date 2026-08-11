@@ -138,8 +138,21 @@ impl TunnelMateApp {
         cx.notify();
     }
 
-    pub(crate) fn delete_current_group(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn request_delete_current_group(&mut self, cx: &mut Context<Self>) {
         let TunnelFilter::Group(id) = self.filter.clone() else {
+            return;
+        };
+        self.group_delete_confirmation = Some(id);
+        cx.notify();
+    }
+
+    pub(crate) fn cancel_group_delete_confirmation(&mut self, cx: &mut Context<Self>) {
+        self.group_delete_confirmation = None;
+        cx.notify();
+    }
+
+    pub(crate) fn confirm_delete_current_group(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.group_delete_confirmation.take() else {
             return;
         };
         let mut next_config = self.config.clone();

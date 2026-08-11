@@ -200,6 +200,9 @@ impl Render for TunnelMateApp {
             .when(self.delete_confirmation.is_some(), |root| {
                 root.child(self.render_delete_confirmation(cx))
             })
+            .when(self.group_delete_confirmation.is_some(), |root| {
+                root.child(self.render_group_delete_confirmation(cx))
+            })
             .when(self.diagnostics.is_some(), |root| {
                 root.child(self.render_diagnostics(cx))
             })

@@ -316,6 +316,7 @@ pub(crate) struct TunnelMateApp {
     pub(crate) group_form: Option<GroupForm>,
     pub(crate) save_confirmation: Option<Tunnel>,
     pub(crate) delete_confirmation: Option<String>,
+    pub(crate) group_delete_confirmation: Option<String>,
     pub(crate) pending_delete: Option<String>,
     pub(crate) auth_prompt: Option<AuthPrompt>,
     pub(crate) about_open: bool,

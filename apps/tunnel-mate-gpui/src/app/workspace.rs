@@ -603,7 +603,9 @@ impl TunnelMateApp {
                                     .cursor_pointer()
                                     .on_mouse_up(
                                         MouseButton::Left,
-                                        cx.listener(|this, _, _, cx| this.delete_current_group(cx)),
+                                        cx.listener(|this, _, _, cx| {
+                                            this.request_delete_current_group(cx)
+                                        }),
                                     )
                                     .child(self.language.pick("删除", "Delete")),
                             )

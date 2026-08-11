@@ -9,7 +9,7 @@ impl TunnelMateApp {
         {
             return;
         }
-        if self.delete_confirmation.is_some() {
+        if self.delete_confirmation.is_some() || self.group_delete_confirmation.is_some() {
             return;
         }
         if self.pending_import.is_some() {

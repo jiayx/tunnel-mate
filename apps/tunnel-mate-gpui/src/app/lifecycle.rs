@@ -120,6 +120,7 @@ impl TunnelMateApp {
             group_form: None,
             save_confirmation: None,
             delete_confirmation: None,
+            group_delete_confirmation: None,
             pending_delete: None,
             auth_prompt: None,
             about_open: false,

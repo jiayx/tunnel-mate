@@ -20,6 +20,9 @@ impl TunnelMateApp {
 
     pub(crate) fn open_create_sheet(&mut self, cx: &mut Context<Self>) {
         let mut form = TunnelForm::new(None, self.language, cx);
+        if let TunnelFilter::Group(group_id) = &self.filter {
+            form.group_id = Some(group_id.clone());
+        }
         form.ssh_hosts = parse_ssh_config(self.config.settings.ssh_config_path.as_deref());
         self.form = Some(form);
         self.notice = None;
@@ -278,6 +281,10 @@ impl TunnelMateApp {
             return;
         }
         if self.delete_confirmation.take().is_some() {
+            cx.notify();
+            return;
+        }
+        if self.group_delete_confirmation.take().is_some() {
             cx.notify();
             return;
         }

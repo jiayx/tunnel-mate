@@ -93,6 +93,77 @@ pub struct Tunnel {
     pub retry_interval: u32, // in seconds
 }
 
+impl Tunnel {
+    /// Returns whether applying `updated` requires replacing the live SSH/forwarding session.
+    ///
+    /// Keep the destructuring exhaustive: adding a field to `Tunnel` must also classify it here.
+    pub fn connection_settings_differ(&self, updated: &Self) -> bool {
+        let Self {
+            id: _,
+            name: _,
+            description: _,
+            group_id: _,
+            ssh_host,
+            ssh_port,
+            ssh_user,
+            ssh_identity_file,
+            ssh_password,
+            jump_host_enabled,
+            jump_host_id,
+            jump_host,
+            jump_port,
+            jump_user,
+            jump_identity_file,
+            jump_password,
+            forward,
+            start_with_app: _,
+            auto_reconnect,
+            retry_count,
+            retry_interval,
+        } = self;
+        let Self {
+            id: _,
+            name: _,
+            description: _,
+            group_id: _,
+            ssh_host: updated_ssh_host,
+            ssh_port: updated_ssh_port,
+            ssh_user: updated_ssh_user,
+            ssh_identity_file: updated_ssh_identity_file,
+            ssh_password: updated_ssh_password,
+            jump_host_enabled: updated_jump_host_enabled,
+            jump_host_id: updated_jump_host_id,
+            jump_host: updated_jump_host,
+            jump_port: updated_jump_port,
+            jump_user: updated_jump_user,
+            jump_identity_file: updated_jump_identity_file,
+            jump_password: updated_jump_password,
+            forward: updated_forward,
+            start_with_app: _,
+            auto_reconnect: updated_auto_reconnect,
+            retry_count: updated_retry_count,
+            retry_interval: updated_retry_interval,
+        } = updated;
+
+        ssh_host != updated_ssh_host
+            || ssh_port != updated_ssh_port
+            || ssh_user != updated_ssh_user
+            || ssh_identity_file != updated_ssh_identity_file
+            || ssh_password != updated_ssh_password
+            || jump_host_enabled != updated_jump_host_enabled
+            || jump_host_id != updated_jump_host_id
+            || jump_host != updated_jump_host
+            || jump_port != updated_jump_port
+            || jump_user != updated_jump_user
+            || jump_identity_file != updated_jump_identity_file
+            || jump_password != updated_jump_password
+            || forward != updated_forward
+            || auto_reconnect != updated_auto_reconnect
+            || retry_count != updated_retry_count
+            || retry_interval != updated_retry_interval
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GlobalSettings {
@@ -493,6 +564,58 @@ mod tests {
             retry_count: 3,
             retry_interval: 5,
         }
+    }
+
+    #[test]
+    fn metadata_changes_do_not_require_reconnecting() {
+        let original = test_tunnel(ForwardSpec::Local {
+            listen: Endpoint {
+                host: "127.0.0.1".into(),
+                port: 5432,
+            },
+            target: Endpoint {
+                host: "db.internal".into(),
+                port: 5432,
+            },
+        });
+        let mut updated = original.clone();
+        updated.name = "Renamed tunnel".into();
+        updated.description = Some("New description".into());
+        updated.group_id = Some("production".into());
+        updated.start_with_app = !updated.start_with_app;
+
+        assert!(!original.connection_settings_differ(&updated));
+    }
+
+    #[test]
+    fn connection_and_reconnect_policy_changes_require_reconnecting() {
+        let original = test_tunnel(ForwardSpec::Local {
+            listen: Endpoint {
+                host: "127.0.0.1".into(),
+                port: 5432,
+            },
+            target: Endpoint {
+                host: "db.internal".into(),
+                port: 5432,
+            },
+        });
+
+        let mut ssh_changed = original.clone();
+        ssh_changed.ssh_host = "new.example.com".into();
+        assert!(original.connection_settings_differ(&ssh_changed));
+
+        let mut forward_changed = original.clone();
+        forward_changed.forward = ForwardSpec::Socks5 {
+            listen: Endpoint {
+                host: "127.0.0.1".into(),
+                port: 1080,
+            },
+        };
+        assert!(original.connection_settings_differ(&forward_changed));
+
+        let mut policy_changed = original.clone();
+        policy_changed.retry_interval += 1;
+        assert!(original.connection_settings_differ(&policy_changed));
     }
 
     #[test]

@@ -221,19 +221,20 @@ impl TunnelMateApp {
                 if let Some(form) = &mut self.form {
                     form.validation_error = None;
                 }
-                let unchanged = self
+                let existing = self
                     .config
                     .tunnels
                     .iter()
-                    .find(|existing| existing.id == tunnel.id)
-                    .is_some_and(|existing| existing == &tunnel);
-                if unchanged {
+                    .find(|existing| existing.id == tunnel.id);
+                if existing.is_some_and(|existing| existing == &tunnel) {
                     self.form = None;
                     self.notice = None;
                     cx.notify();
                     return;
                 }
-                if self.is_active(&tunnel.id) {
+                let requires_reconnect =
+                    existing.is_some_and(|existing| existing.connection_settings_differ(&tunnel));
+                if self.is_active(&tunnel.id) && requires_reconnect {
                     self.save_confirmation = Some(tunnel);
                     cx.notify();
                     return;
