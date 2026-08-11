@@ -14,7 +14,51 @@ Tunnel Mate 是一款使用 Rust + GPUI 构建的原生跨平台 SSH 隧道管�
 - 连接诊断、活动记录、实时日志以及配置备份与恢复
 - 根据操作系统语言自动选择中文或英文界面
 
+## 安装
+
+所有安装包都可以从 [GitHub 最新版本](https://github.com/jiayx/tunnel-mate/releases/latest) 下载。
+
+### macOS
+
+推荐使用 Homebrew 安装，Homebrew 会自动选择 Apple 芯片或 Intel 版本：
+
+```bash
+brew install --cask jiayx/tap/tunnel-mate
+```
+
+已有安装可以通过下面的命令升级：
+
+```bash
+brew upgrade --cask tunnel-mate
+```
+
+也可以从 GitHub Releases 下载对应的 macOS DMG，再把 **Tunnel Mate** 拖入“应用程序”。当前版本未签名且未经 Apple 公证；如果首次启动被拦截，请右键选择“打开”，或前往“系统设置 > 隐私与安全性”允许打开。
+
+### Windows
+
+从 GitHub Releases 下载 x86_64 `.exe` 安装程序，也可以使用 `.msi` 或免安装的 `.zip` 便携版。当前版本未签名，SmartScreen 可能提示“未知发布者”。
+
+### Linux
+
+目前只提供 x86_64 版本。在 Debian 或 Ubuntu 上，下载 `.deb` 后执行：
+
+```bash
+sudo apt install ./tunnel-mate-*-linux-x86_64.deb
+```
+
+其他桌面发行版可以使用 AppImage。把文件放到固定目录，赋予执行权限后运行：
+
+```bash
+chmod +x tunnel-mate-*-linux-x86_64.AppImage
+./tunnel-mate-*-linux-x86_64.AppImage
+```
+
 ## 使用说明
+
+1. 点击“新建隧道”，选择本地转发、远程转发或 SOCKS5，然后填写 SSH 连接信息；也可以从 `~/.ssh/config` 自动带入主机、端口、用户和私钥。
+2. 填写转发端点。必填项带有星号，重连、超时和跳板机等低频选项放在高级设置中。
+3. 保存后通过隧道开关连接。首次连接会显示服务器指纹，请独立核对无误后再选择“信任并连接”。
+4. 隧道运行时可把 Tunnel Mate 留在 Dock、通知区域或状态栏。需要登录系统后自动恢复时，开启“开机启动”和“应用启动时自动重连”。
 
 点击“新建隧道”手工创建，或从 `~/.ssh/config` 选择已有主机。本地转发会把远端服务映射到当前电脑；远程转发会通过 SSH 服务器暴露本地服务；SOCKS5 会创建本地动态代理。
 
@@ -45,7 +89,7 @@ apps/tunnel-mate-gpui  ──调用──▶  crates/tunnel-core
           └── 运行及打包资源 ──▶ assets/icons
 ```
 
-仓库现在是纯 Rust workspace，不需要 Web 前端或 WebView 运行时。Tunnel Mate 继续兼容现有的 `TunnelMate/config.json`、`events.jsonl` 和系统钥匙串凭据格式，升级时无需手工迁移数据。
+仓库是纯 Rust workspace，不需要 Web 前端或 WebView 运行时。运行配置和事件记录保存在操作系统的应用数据目录，凭据则保存在系统钥匙串中。
 
 ## 开发与测试
 
@@ -62,8 +106,6 @@ cargo clippy --workspace --all-targets -- -D warnings
 CI 还会运行 RustSec 依赖安全审计。由于 russh 的 RSA-SHA2 支持依赖 RustCrypto RSA，且上游尚无修复版本，目前仅精确忽略 `RUSTSEC-2023-0071`；其他漏洞仍会阻止发布。Dependabot 每月检查 Cargo 和工作流依赖，GitHub Actions 均固定到不可变的提交 SHA。
 
 ## 打包与发布
-
-`v0.2.6` 是最后一个 Tauri 版本。原生 GPUI 版本从 `v0.5.0` 开始，后续沿用 `v0.5.x` 版本线。
 
 首次打包前安装固定版本的打包工具：
 
@@ -89,9 +131,7 @@ cargo install cargo-packager --version 0.11.8 --locked
 
 `.github/workflows/release.yml` 会检查 macOS、Linux 和 Windows，并在手工运行或推送版本标签时生成 DMG、DEB/AppImage 和 Windows WiX/NSIS 安装包。Windows 还会生成包含 `Tunnel Mate.exe` 的便携 ZIP，解压后无需安装即可运行。
 
-正式标签发布会同时生成 `SHA256SUMS` 和 GitHub 构建来源证明。仓库配置 Apple Developer ID/公证及 Windows Authenticode 密钥后，工作流会自动签名；没有相应密钥时会明确生成未签名安装包，不会伪造签名状态。
-
-未签名的 macOS 版本首次启动时，可能需要右键应用并选择“打开”。
+正式版本会生成 `SHA256SUMS` 和 GitHub 构建来源证明。当前 macOS 和 Windows 发布包均未签名，配置证书后才会启用签名。
 
 ## 开源协议
 

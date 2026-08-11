@@ -19,7 +19,68 @@ options are kept in Advanced settings.
 - Connection diagnostics, activity history, live logs, and config backup/import
 - Chinese and English UI selected from the operating-system language
 
+## Installation
+
+Download packages from the [latest GitHub release](https://github.com/jiayx/tunnel-mate/releases/latest).
+
+### macOS
+
+Homebrew is the recommended installation method and automatically selects the
+Apple Silicon or Intel build:
+
+```bash
+brew install --cask jiayx/tap/tunnel-mate
+```
+
+Upgrade an existing installation with:
+
+```bash
+brew upgrade --cask tunnel-mate
+```
+
+Alternatively, download the matching macOS DMG from GitHub Releases and drag
+**Tunnel Mate** into Applications. Current releases are unsigned and not
+notarized. If macOS blocks the first launch, right-click the app and choose
+**Open**, or allow it from **System Settings > Privacy & Security**.
+
+### Windows
+
+Download the x86_64 `.exe` installer from GitHub Releases and run it. The `.msi`
+package is also available for managed installation. To use Tunnel Mate without
+installing it, download the Windows `.zip`, extract it to a stable directory,
+and run `Tunnel Mate.exe`; moving that file later requires re-enabling launch at
+login. Current Windows packages are unsigned, so SmartScreen may show an
+unknown-publisher warning.
+
+### Linux
+
+Only x86_64 packages are currently published. On Debian or Ubuntu, download the
+`.deb` package and install it together with its desktop dependencies:
+
+```bash
+sudo apt install ./tunnel-mate-*-linux-x86_64.deb
+```
+
+On other desktop distributions, download the AppImage, make it executable, and
+run it from a stable location:
+
+```bash
+chmod +x tunnel-mate-*-linux-x86_64.AppImage
+./tunnel-mate-*-linux-x86_64.AppImage
+```
+
 ## Using Tunnel Mate
+
+1. Select **New tunnel**, choose local, remote, or SOCKS5 forwarding, and enter
+   the SSH connection details. An entry from `~/.ssh/config` can fill the host,
+   port, user, and identity file automatically.
+2. Enter the forwarding endpoint. Required fields are marked with an asterisk;
+   Advanced settings contain optional reconnect, timeout, and jump-host options.
+3. Save the tunnel and use its switch to connect. Verify the server fingerprint
+   independently before choosing **Trust and connect** on first contact.
+4. Keep Tunnel Mate running in the Dock, notification area, or status area while
+   the tunnel is in use. Enable launch at login and reconnect-on-launch when the
+   tunnel should return automatically after signing in.
 
 Create a tunnel with the **New tunnel** button, or import host details from
 `~/.ssh/config`. Local forwarding exposes a remote service on this computer;
@@ -81,9 +142,9 @@ apps/tunnel-mate-gpui  ──uses──▶  crates/tunnel-core
 ```
 
 The repository is a pure Rust workspace; it does not require a web frontend or
-webview runtime. Tunnel Mate retains the existing `TunnelMate/config.json`,
-`events.jsonl`, and system-keyring credential format, so upgrades do not require
-manual data migration.
+webview runtime. Runtime configuration and events are stored in the operating
+system application-data directory, while credentials stay in the system
+keyring.
 
 ## Development
 
@@ -104,9 +165,6 @@ checks Cargo and workflow dependencies monthly; workflow actions are pinned to
 immutable commit SHAs.
 
 ## Packaging and releases
-
-`v0.2.6` is the final Tauri release. Native GPUI releases start at `v0.5.0`
-and continue on the `v0.5.x` version line.
 
 Install the pinned packaging tool once:
 
@@ -141,12 +199,8 @@ The `.github/workflows/release.yml` workflow checks macOS, Linux, and Windows
 and produces DMG, DEB/AppImage, and Windows WiX/NSIS installers. Windows also
 gets a portable ZIP containing `Tunnel Mate.exe`, which can run without
 installation. Tagged releases include `SHA256SUMS` and GitHub build-provenance
-attestations. The workflow automatically uses Apple Developer ID/notarization
-and Windows Authenticode credentials when their repository secrets are
-configured; otherwise it explicitly produces unsigned packages.
-
-Unsigned macOS builds may require right-clicking the app and choosing **Open**
-the first time.
+attestations. Current macOS and Windows packages are unsigned; signing will be
+enabled after the required certificates are configured.
 
 ## License
 
