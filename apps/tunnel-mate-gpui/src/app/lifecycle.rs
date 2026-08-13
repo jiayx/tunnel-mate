@@ -312,6 +312,7 @@ impl TunnelMateApp {
                 }
             }
             AppMessage::Tray(id) if id == "show" => {
+                set_dock_visible(true);
                 cx.activate(true);
                 for handle in cx.windows() {
                     let _ = handle.update(cx, |_, window, _| window.activate_window());

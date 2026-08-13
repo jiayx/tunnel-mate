@@ -4,6 +4,8 @@
 )]
 
 mod i18n;
+#[cfg(target_os = "macos")]
+mod single_instance;
 mod system;
 mod text_input;
 
@@ -116,26 +118,50 @@ actions!(
     ]
 );
 
-fn close_to_tray_description(language: Language) -> &'static str {
+fn start_in_background_description(language: Language) -> &'static str {
     #[cfg(target_os = "macos")]
     {
         language.pick(
-            "点关闭按钮只隐藏窗口，隧道继续运行；可从 Dock 或菜单栏恢复",
-            "Hide the window without stopping tunnels; restore it from the Dock or menu bar",
+            "启动后不显示主窗口和 Dock 图标，仅显示菜单栏图标",
+            "Start without the main window or Dock icon; show only the menu bar icon",
         )
     }
     #[cfg(target_os = "windows")]
     {
         language.pick(
-            "点关闭按钮只隐藏窗口，隧道继续运行；可从任务栏通知区域恢复",
-            "Hide the window without stopping tunnels; restore it from the notification area",
+            "启动后不显示主窗口，仅显示通知区域图标",
+            "Start without the main window; show only the notification area icon",
         )
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         language.pick(
-            "点关闭按钮只隐藏窗口，隧道继续运行；可从系统托盘或状态区恢复",
-            "Hide the window without stopping tunnels; restore it from the system tray or status area",
+            "启动后不显示主窗口，仅显示系统托盘图标",
+            "Start without the main window; show only the system tray icon",
+        )
+    }
+}
+
+fn keep_running_after_close_description(language: Language) -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        language.pick(
+            "关闭主窗口后隐藏 Dock 图标，隧道继续运行；可从菜单栏重新打开",
+            "Hide the Dock icon and keep tunnels running after closing the main window; reopen from the menu bar",
+        )
+    }
+    #[cfg(target_os = "windows")]
+    {
+        language.pick(
+            "关闭主窗口后在通知区域继续运行，隧道保持连接；可从通知区域重新打开",
+            "Keep running in the notification area after closing the main window; reopen from the notification area",
+        )
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        language.pick(
+            "关闭主窗口后在系统托盘继续运行，隧道保持连接；可从托盘重新打开",
+            "Keep running in the system tray after closing the main window; reopen from the tray",
         )
     }
 }
@@ -258,14 +284,29 @@ fn parse_host_key_prompt(
 mod platform;
 use platform::*;
 fn main() {
+    #[cfg(target_os = "macos")]
+    let _instance_guard = match single_instance::SingleInstanceGuard::acquire() {
+        Ok(Some(guard)) => guard,
+        Ok(None) => return,
+        Err(error) => {
+            eprintln!("Tunnel Mate could not acquire its single-instance lock: {error}");
+            return;
+        }
+    };
+
+    let minimized_arg = std::env::args().any(|arg| arg == "--minimized");
     let application = gpui_platform::application();
+    if minimized_arg {
+        set_dock_visible(false);
+    }
     application.on_reopen(|cx| {
+        set_dock_visible(true);
         cx.activate(true);
         for handle in cx.windows() {
             let _ = handle.update(cx, |_, window, _| window.activate_window());
         }
     });
-    application.run(|cx: &mut App| {
+    application.run(move |cx: &mut App| {
         text_input::init(cx);
         cx.set_window_appearance(Some(WindowAppearance::Dark));
         let window_size = size(px(920.0), px(620.0));
@@ -295,7 +336,6 @@ fn main() {
         // On macOS tray initialization replaces NSApp's main menu, so native behavior is
         // installed afterwards. Other platforms only register their conventional shortcuts.
         install_native_behavior(cx, Language::system());
-        let minimized_arg = std::env::args().any(|arg| arg == "--minimized");
         if minimized_arg {
             cx.hide();
         } else {

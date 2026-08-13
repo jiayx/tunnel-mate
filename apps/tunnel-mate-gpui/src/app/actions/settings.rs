@@ -93,7 +93,10 @@ impl TunnelMateApp {
         };
         match setting {
             SettingToggle::Launch => form.launch_on_startup = !form.launch_on_startup,
-            SettingToggle::Minimized => form.start_minimized = !form.start_minimized,
+            SettingToggle::Minimized if form.launch_on_startup => {
+                form.start_minimized = !form.start_minimized
+            }
+            SettingToggle::Minimized => {}
             SettingToggle::CloseToTray => form.close_to_tray = !form.close_to_tray,
         }
         cx.notify();

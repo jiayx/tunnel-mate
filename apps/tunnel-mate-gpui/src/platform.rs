@@ -1,6 +1,29 @@
 use super::*;
 
 #[cfg(target_os = "macos")]
+pub(crate) fn set_dock_visible(visible: bool) {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+
+    let Some(main_thread) = MainThreadMarker::new() else {
+        eprintln!("Tunnel Mate can only change Dock visibility from the macOS main thread");
+        return;
+    };
+    let application = NSApplication::sharedApplication(main_thread);
+    let policy = if visible {
+        NSApplicationActivationPolicy::Regular
+    } else {
+        NSApplicationActivationPolicy::Accessory
+    };
+    if !application.setActivationPolicy(policy) {
+        eprintln!("Tunnel Mate could not change its macOS activation policy");
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn set_dock_visible(_visible: bool) {}
+
+#[cfg(target_os = "macos")]
 pub(crate) fn install_native_behavior(cx: &mut App, language: Language) {
     cx.bind_keys([
         KeyBinding::new("cmd-,", OpenSettings, None),

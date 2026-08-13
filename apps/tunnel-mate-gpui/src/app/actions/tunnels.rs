@@ -252,6 +252,7 @@ impl TunnelMateApp {
     pub(crate) fn request_close(&mut self, cx: &mut Context<Self>) {
         if self.config.settings.close_to_tray && self._tray.is_some() {
             cx.hide();
+            set_dock_visible(false);
         } else {
             self.request_quit();
         }
