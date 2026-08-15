@@ -458,18 +458,52 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: release-assets
           merge-multiple: true
+      - name: Generate release notes
+        run: |
+          set -euo pipefail
+
+          previous_tag="$(git describe \
+            --tags \
+            --abbrev=0 \
+            "${GITHUB_SHA}^" 2>/dev/null || true)"
+
+          {
+            echo "## Changes"
+            echo
+
+            if [ -n "$previous_tag" ]; then
+              git log \
+                --no-merges \
+                --invert-grep \
+                --grep='^release: v' \
+                --pretty='- %s (`%h`)' \
+                "${previous_tag}..${GITHUB_SHA}"
+            else
+              git log \
+                --no-merges \
+                --invert-grep \
+                --grep='^release: v' \
+                --pretty='- %s (`%h`)'
+            fi
+          } > release-notes.md
       - name: Publish release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
           (cd release-assets && sha256sum * > SHA256SUMS)
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
-            gh release create "$GITHUB_REF_NAME" --verify-tag --title "Tunnel Mate $GITHUB_REF_NAME" --generate-notes
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" --title "Tunnel Mate $GITHUB_REF_NAME" --notes-file release-notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --title "Tunnel Mate $GITHUB_REF_NAME" --notes-file release-notes.md
+          fi
           gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
 
   homebrew:
