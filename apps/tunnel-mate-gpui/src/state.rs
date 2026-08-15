@@ -10,10 +10,6 @@ pub(crate) enum TunnelFilter {
 
 pub(crate) enum AppMessage {
     Runtime(RuntimeEvent),
-    Log {
-        tunnel_id: String,
-        message: String,
-    },
     OperationError {
         tunnel_name: String,
         message: String,
@@ -27,7 +23,10 @@ pub(crate) enum AppMessage {
         tunnel_name: String,
         message: String,
     },
-    FileOperation(String),
+    FileOperation {
+        message: String,
+        transient: bool,
+    },
     PrivateKeySelected {
         target: PrivateKeyTarget,
         path: String,
@@ -35,6 +34,77 @@ pub(crate) enum AppMessage {
     Tray(String),
     QuitReady,
     HostTrusted(String),
+}
+
+pub(crate) struct ActivityEvents {
+    events: RwLock<VecDeque<LogEvent>>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NoticeKind {
+    Transient,
+    Progress,
+    Persistent,
+}
+
+pub(crate) struct AppNotice {
+    pub(crate) id: u64,
+    pub(crate) message: SharedString,
+    pub(crate) kind: NoticeKind,
+    pub(crate) tunnel_id: Option<String>,
+}
+
+impl ActivityEvents {
+    pub(crate) fn new(events: Vec<LogEvent>) -> Self {
+        Self {
+            events: RwLock::new(events.into()),
+        }
+    }
+
+    fn read(&self) -> std::sync::RwLockReadGuard<'_, VecDeque<LogEvent>> {
+        self.events
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn write(&self) -> std::sync::RwLockWriteGuard<'_, VecDeque<LogEvent>> {
+        self.events
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.read().is_empty()
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.read().len()
+    }
+
+    pub(crate) fn newest_in(&self, range: Range<usize>) -> Vec<LogEvent> {
+        let events = self.read();
+        let event_count = events.len();
+        range
+            .filter_map(|index| {
+                event_count
+                    .checked_sub(index + 1)
+                    .and_then(|index| events.get(index))
+                    .cloned()
+            })
+            .collect()
+    }
+
+    pub(crate) fn push(&self, event: LogEvent) {
+        let mut events = self.write();
+        events.push_back(event);
+        if events.len() > 1_000 {
+            events.pop_front();
+        }
+    }
+
+    pub(crate) fn clear(&self) {
+        self.write().clear();
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -304,12 +374,14 @@ pub(crate) struct TunnelMateApp {
     pub(crate) filter: TunnelFilter,
     pub(crate) selected_tunnel: Option<String>,
     pub(crate) form: Option<TunnelForm>,
-    pub(crate) notice: Option<SharedString>,
+    pub(crate) notice: Option<AppNotice>,
+    pub(crate) next_notice_id: u64,
+    pub(crate) notice_task: Option<Task<()>>,
     pub(crate) load_error: Option<SharedString>,
     pub(crate) statuses: HashMap<String, TunnelStatus>,
     pub(crate) pending_starts: HashSet<String>,
-    pub(crate) logs: HashMap<String, Vec<String>>,
-    pub(crate) events: Vec<LogEvent>,
+    pub(crate) events: Arc<ActivityEvents>,
+    pub(crate) activity_scroll: UniformListScrollHandle,
     pub(crate) diagnostics: Option<Vec<DiagnosticStep>>,
     pub(crate) settings_form: Option<SettingsForm>,
     pub(crate) pending_import: Option<AppConfig>,

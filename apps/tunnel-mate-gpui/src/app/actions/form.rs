@@ -100,10 +100,9 @@ impl TunnelMateApp {
         let Some(form) = &self.group_form else { return };
         let name = form.name.read(cx).value();
         if name.trim().is_empty() {
-            self.notice = Some(
+            self.show_persistent_notice(
                 self.language
-                    .pick("分组名称不能为空", "Group name cannot be empty")
-                    .into(),
+                    .pick("分组名称不能为空", "Group name cannot be empty"),
             );
             cx.notify();
             return;
@@ -131,9 +130,9 @@ impl TunnelMateApp {
             Ok(()) => {
                 self.config = next_config;
                 self.group_form = None;
-                self.notice = Some(self.language.pick("分组已保存", "Group saved").into());
+                self.show_transient_notice(self.language.pick("分组已保存", "Group saved"), cx);
             }
-            Err(error) => self.notice = Some(format!("保存分组失败：{error}").into()),
+            Err(error) => self.show_persistent_notice(format!("保存分组失败：{error}")),
         }
         cx.notify();
     }
@@ -166,16 +165,15 @@ impl TunnelMateApp {
             Ok(()) => {
                 self.config = next_config;
                 self.filter = TunnelFilter::All;
-                self.notice = Some(
-                    self.language
-                        .pick(
-                            "分组已删除，隧道已移到未分组",
-                            "Group deleted; its tunnels were moved to Ungrouped",
-                        )
-                        .into(),
+                self.show_transient_notice(
+                    self.language.pick(
+                        "分组已删除，隧道已移到未分组",
+                        "Group deleted; its tunnels were moved to Ungrouped",
+                    ),
+                    cx,
                 );
             }
-            Err(error) => self.notice = Some(format!("删除分组失败：{error}").into()),
+            Err(error) => self.show_persistent_notice(format!("删除分组失败：{error}")),
         }
         cx.notify();
     }
@@ -209,7 +207,76 @@ impl TunnelMateApp {
     }
 
     pub(crate) fn dismiss_notice(&mut self, cx: &mut Context<Self>) {
+        self.clear_notice();
+        cx.notify();
+    }
+
+    pub(crate) fn clear_notice(&mut self) {
         self.notice = None;
+        self.notice_task = None;
+    }
+
+    pub(crate) fn set_notice(&mut self, message: impl Into<SharedString>, kind: NoticeKind) -> u64 {
+        self.notice_task = None;
+        self.next_notice_id = self.next_notice_id.wrapping_add(1);
+        let id = self.next_notice_id;
+        self.notice = Some(AppNotice {
+            id,
+            message: message.into(),
+            kind,
+            tunnel_id: None,
+        });
+        id
+    }
+
+    pub(crate) fn show_persistent_notice(&mut self, message: impl Into<SharedString>) {
+        self.set_notice(message, NoticeKind::Persistent);
+    }
+
+    pub(crate) fn show_progress_notice(
+        &mut self,
+        message: impl Into<SharedString>,
+        tunnel_id: Option<String>,
+    ) {
+        self.set_notice(message, NoticeKind::Progress);
+        if let Some(notice) = &mut self.notice {
+            notice.tunnel_id = tunnel_id;
+        }
+    }
+
+    pub(crate) fn clear_progress_notice(
+        &mut self,
+        updated_tunnel_id: &str,
+        has_pending_tunnels: bool,
+    ) {
+        if self.notice.as_ref().is_some_and(|notice| {
+            progress_notice_clears_on_status(
+                notice.kind,
+                notice.tunnel_id.as_deref(),
+                updated_tunnel_id,
+                has_pending_tunnels,
+            )
+        }) {
+            self.notice = None;
+            self.notice_task = None;
+        }
+    }
+
+    pub(crate) fn show_transient_notice(
+        &mut self,
+        message: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        let notice_id = self.set_notice(message, NoticeKind::Transient);
+        self.notice_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_secs(4)).await;
+            let _ = this.update(cx, |this, cx| {
+                if notice_is_current(this.notice.as_ref().map(|notice| notice.id), notice_id) {
+                    this.notice = None;
+                    cx.notify();
+                }
+            });
+        }));
         cx.notify();
     }
 

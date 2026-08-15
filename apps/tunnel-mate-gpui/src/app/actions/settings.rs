@@ -33,14 +33,10 @@ impl TunnelMateApp {
         let keep_alive = match form.keep_alive.read(cx).value().parse::<u32>() {
             Ok(value) if value > 0 => value,
             _ => {
-                self.notice = Some(
-                    self.language
-                        .pick(
-                            "保活间隔必须是大于 0 的秒数",
-                            "Keep-alive must be greater than 0 seconds",
-                        )
-                        .into(),
-                );
+                self.show_persistent_notice(self.language.pick(
+                    "保活间隔必须是大于 0 的秒数",
+                    "Keep-alive must be greater than 0 seconds",
+                ));
                 cx.notify();
                 return;
             }
@@ -48,14 +44,10 @@ impl TunnelMateApp {
         let connect_timeout = match form.connect_timeout.read(cx).value().parse::<u32>() {
             Ok(value) if value > 0 => value,
             _ => {
-                self.notice = Some(
-                    self.language
-                        .pick(
-                            "连接超时必须是大于 0 的秒数",
-                            "Connection timeout must be greater than 0 seconds",
-                        )
-                        .into(),
-                );
+                self.show_persistent_notice(self.language.pick(
+                    "连接超时必须是大于 0 的秒数",
+                    "Connection timeout must be greater than 0 seconds",
+                ));
                 cx.notify();
                 return;
             }
@@ -72,7 +64,7 @@ impl TunnelMateApp {
             next_config.settings.launch_on_startup,
             next_config.settings.start_minimized,
         ) {
-            self.notice = Some(error.into());
+            self.show_persistent_notice(error);
             cx.notify();
             return;
         }
@@ -80,9 +72,9 @@ impl TunnelMateApp {
             Ok(()) => {
                 self.config = next_config;
                 self.settings_form = None;
-                self.notice = Some(self.language.pick("设置已保存", "Settings saved").into());
+                self.show_transient_notice(self.language.pick("设置已保存", "Settings saved"), cx);
             }
-            Err(error) => self.notice = Some(format!("设置保存失败：{error}").into()),
+            Err(error) => self.show_persistent_notice(format!("设置保存失败：{error}")),
         }
         cx.notify();
     }

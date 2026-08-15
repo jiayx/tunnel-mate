@@ -11,7 +11,7 @@ Tunnel Mate 是一款使用 Rust + GPUI 构建的原生跨平台 SSH 隧道管�
 - 密码只存入操作系统钥匙串，不会写入配置文件或备份
 - 跳板机、主机密钥确认、加密私钥口令和自动重连
 - 系统托盘、隧道随应用启动、登录时启动、最小化启动和关闭到托盘
-- 连接诊断、活动记录、实时日志以及配置备份与恢复
+- 连接诊断、活动记录以及配置备份与恢复
 - 根据操作系统语言自动选择中文或英文界面
 
 ## 安装
@@ -119,7 +119,7 @@ cargo install cargo-packager --version 0.11.8 --locked
 ./scripts/package-local-debug.sh
 ```
 
-脚本明确使用 `app` 格式，不会创建、挂载或自动打开 DMG。默认复用 Cargo 日常开发和测试共用的增量 Debug 缓存，并跳过仅正式 Release 需要的 LTO 和符号裁剪，因此小范围 UI 修改会快很多。默认产物位于 `target/debug/Tunnel Mate.app`。
+脚本明确使用 `app` 格式，不会创建、挂载或自动打开 DMG。默认复用 Cargo 日常开发和测试共用的增量 Debug 缓存，并跳过仅正式 Release 需要的 LTO 和符号裁剪；应用代码保持快速增量编译，GPUI 等第三方依赖会启用适度优化，以便本地滚动和交互测试更接近正式包。默认产物位于 `target/debug/Tunnel Mate.app`。
 
 从干净的 `main` 分支准备并发布新版本：
 

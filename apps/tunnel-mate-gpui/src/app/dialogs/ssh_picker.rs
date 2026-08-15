@@ -21,11 +21,12 @@ impl TunnelMateApp {
             .text_color(TEXT)
             .child(div().size(px(7.0)).rounded(px(4.0)).bg(PRIMARY))
             .child(
-                div()
-                    .flex_grow(1.0)
-                    .min_w_0()
-                    .whitespace_normal()
-                    .child(self.notice.clone().unwrap_or_default()),
+                div().flex_grow(1.0).min_w_0().whitespace_normal().child(
+                    self.notice
+                        .as_ref()
+                        .map(|notice| notice.message.clone())
+                        .unwrap_or_default(),
+                ),
             )
             .child(
                 div()

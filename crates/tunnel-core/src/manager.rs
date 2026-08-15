@@ -620,9 +620,7 @@ impl TunnelManager {
                         break;
                     }
                 };
-                let is_disconnected = handle.lock().await.is_closed();
-
-                if is_disconnected {
+                if let Some(disconnect_reason) = SshSession::closed_reason(&handle).await {
                     // Stop the disconnected tunnel
                     let active = m_state.lock().await.active_tunnels.remove(&tunnel_id);
                     let log_channel = if let Some(mut active) = active {
@@ -641,7 +639,7 @@ impl TunnelManager {
                         Some(tunnel_id.clone()),
                         Some(tunnel.name.clone()),
                         EventType::Failed,
-                        "SSH session heartbeat timed out or disconnected".to_string(),
+                        disconnect_reason,
                     );
 
                     // Trigger reconnection flow

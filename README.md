@@ -16,7 +16,7 @@ options are kept in Advanced settings.
   automatic reconnect
 - System tray controls, start-with-app tunnels, launch at login, start
   minimized, and close to tray
-- Connection diagnostics, activity history, live logs, and config backup/import
+- Connection diagnostics, activity history, and config backup/import
 - Chinese and English UI selected from the operating-system language
 
 ## Installation
@@ -181,8 +181,10 @@ Build only the local macOS application bundle with:
 The script explicitly uses the `app` format, so it does not create, mount, or
 open a DMG. By default it reuses Cargo's incremental debug build, including the
 cache shared with normal development and tests, and skips release-only LTO and
-symbol stripping. Small UI changes therefore rebuild much faster. The default
-output is `target/debug/Tunnel Mate.app`.
+symbol stripping. Workspace code stays quick to rebuild while third-party
+dependencies such as GPUI receive moderate optimization, making local scrolling
+and interaction checks more representative of release builds. The default output
+is `target/debug/Tunnel Mate.app`.
 
 Prepare and publish a new tagged version from a clean `main` branch with:
 

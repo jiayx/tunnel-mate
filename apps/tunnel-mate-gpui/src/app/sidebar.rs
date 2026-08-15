@@ -51,15 +51,6 @@ impl TunnelMateApp {
             .collect()
     }
 
-    pub(super) fn group_name(&self, tunnel: &Tunnel) -> SharedString {
-        tunnel
-            .group_id
-            .as_ref()
-            .and_then(|id| self.config.groups.iter().find(|group| &group.id == id))
-            .map(|group| group.name.clone().into())
-            .unwrap_or_else(|| self.language.pick("未分组", "Ungrouped").into())
-    }
-
     pub(super) fn route(tunnel: &Tunnel) -> String {
         match &tunnel.forward {
             ForwardSpec::Local { listen, target } => format!(

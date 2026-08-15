@@ -5,13 +5,10 @@ impl TunnelMateApp {
         let content = match export_config_string(&self.config) {
             Ok(content) => content,
             Err(error) => {
-                self.notice = Some(
-                    format!(
-                        "{}: {error}",
-                        self.language.pick("导出失败", "Export failed")
-                    )
-                    .into(),
-                );
+                self.show_persistent_notice(format!(
+                    "{}: {error}",
+                    self.language.pick("导出失败", "Export failed")
+                ));
                 cx.notify();
                 return;
             }
@@ -22,17 +19,23 @@ impl TunnelMateApp {
         let language = self.language;
         cx.spawn(async move |_, _| {
             if let Ok(Ok(Some(path))) = receiver.await {
-                let message = match fs::write(&path, content) {
-                    Ok(()) => format!(
-                        "{} {}",
-                        language.pick("配置已导出到", "Configuration exported to"),
-                        path.display()
+                let (message, transient) = match fs::write(&path, content) {
+                    Ok(()) => (
+                        format!(
+                            "{} {}",
+                            language.pick("配置已导出到", "Configuration exported to"),
+                            path.display()
+                        ),
+                        true,
                     ),
-                    Err(error) => {
-                        format!("{}: {error}", language.pick("导出失败", "Export failed"))
-                    }
+                    Err(error) => (
+                        format!("{}: {error}", language.pick("导出失败", "Export failed")),
+                        false,
+                    ),
                 };
-                let _ = sender.send(AppMessage::FileOperation(message)).await;
+                let _ = sender
+                    .send(AppMessage::FileOperation { message, transient })
+                    .await;
             }
         })
         .detach();

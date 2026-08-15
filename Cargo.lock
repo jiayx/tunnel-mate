@@ -7579,6 +7579,7 @@ dependencies = [
  "libc",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
+ "raw-window-handle",
  "rfd",
  "sys-locale",
  "tokio",
@@ -7586,6 +7587,7 @@ dependencies = [
  "tunnel-core",
  "unicode-segmentation",
  "uuid",
+ "windows 0.61.3",
  "winresource",
 ]
 

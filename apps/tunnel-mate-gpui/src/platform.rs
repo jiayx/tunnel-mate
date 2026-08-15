@@ -1,5 +1,47 @@
 use super::*;
 
+#[cfg(target_os = "windows")]
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+#[cfg(target_os = "windows")]
+use windows::Win32::Foundation::HWND;
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE, SW_SHOW};
+
+#[cfg(target_os = "windows")]
+fn set_window_visible(window: &Window, visible: bool) {
+    let Ok(handle) = window.window_handle() else {
+        return;
+    };
+    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+        return;
+    };
+    let hwnd = HWND(handle.hwnd.get() as *mut _);
+    unsafe {
+        let _ = ShowWindow(hwnd, if visible { SW_SHOW } else { SW_HIDE });
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn hide_window(window: &Window) {
+    set_window_visible(window, false);
+}
+
+// Wayland has no portable request for fully hiding a top-level window. GPUI's
+// minimize implementation uses xdg_toplevel.set_minimized on Wayland and
+// WM_CHANGE_STATE on X11, so this is the reliable cross-desktop fallback.
+#[cfg(target_os = "linux")]
+pub(crate) fn hide_window(window: &Window) {
+    window.minimize_window();
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn show_window(window: &Window) {
+    set_window_visible(window, true);
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn show_window(_window: &Window) {}
+
 #[cfg(target_os = "macos")]
 pub(crate) fn set_dock_visible(visible: bool) {
     use objc2::MainThreadMarker;
@@ -163,9 +205,8 @@ pub(crate) fn register_global_actions(
         let _ = weak.update(cx, |app, cx| app.open_settings(cx));
     });
 
-    let weak = app.downgrade();
     cx.on_action(move |_: &CloseWindow, cx| {
-        let _ = weak.update(cx, |app, cx| app.request_close(cx));
+        let _ = window_handle.update(cx, |app, window, cx| app.request_close(window, cx));
     });
 
     let weak = app.downgrade();

@@ -94,7 +94,7 @@ impl TunnelMateApp {
                 form.validation_error = Some(message.into());
                 form.advanced |= advanced_has_error;
             }
-            self.notice = None;
+            self.clear_notice();
             cx.notify();
             return;
         }
@@ -215,7 +215,7 @@ impl TunnelMateApp {
                     form.validation_error = Some(error.into());
                     form.advanced |= advanced_has_error;
                 }
-                self.notice = None;
+                self.clear_notice();
             }
             Ok((tunnel, start_after_save)) => {
                 if let Some(form) = &mut self.form {
@@ -228,7 +228,7 @@ impl TunnelMateApp {
                     .find(|existing| existing.id == tunnel.id);
                 if existing.is_some_and(|existing| existing == &tunnel) {
                     self.form = None;
-                    self.notice = None;
+                    self.clear_notice();
                     cx.notify();
                     return;
                 }
@@ -284,32 +284,36 @@ impl TunnelMateApp {
                     .or_insert(TunnelStatus::Stopped);
                 self.selected_tunnel = Some(id.clone());
                 self.form = None;
-                self.notice = Some(format!("已保存“{name}”").into());
+                let saved_message = if self.language == Language::Zh {
+                    format!("已保存“{name}”")
+                } else {
+                    format!("Saved “{name}”")
+                };
+                self.show_transient_notice(saved_message, cx);
                 self.refresh_tray();
                 if start_after_save {
                     if self.is_active(&id) {
                         self.pending_starts.insert(id.clone());
-                        self.notice = Some(
+                        self.show_progress_notice(
                             self.language
                                 .pick(
                                     "正在断开旧连接，随后会使用新配置自动重连",
                                     "Disconnecting the old connection; the updated tunnel will reconnect automatically",
-                                )
-                                .into(),
+                                ),
+                            Some(id.clone()),
                         );
                     }
                     self.request_toggle(id, cx);
                     return;
                 }
             }
-            Err(error) => self.notice = Some(format!("保存失败：{error}").into()),
+            Err(error) => self.show_persistent_notice(format!("保存失败：{error}")),
         }
         cx.notify();
     }
 
     pub(super) fn select_tunnel(&mut self, tunnel_id: String, cx: &mut Context<Self>) {
         self.selected_tunnel = Some(tunnel_id);
-        self.notice = None;
         cx.notify();
     }
 
@@ -329,13 +333,13 @@ impl TunnelMateApp {
         let tunnel_name = tunnel.name.clone();
 
         if running {
-            self.notice = Some(
+            self.show_progress_notice(
                 if self.language == Language::Zh {
                     format!("正在停止“{}”…", tunnel.name)
                 } else {
                     format!("Stopping “{}”…", tunnel.name)
-                }
-                .into(),
+                },
+                Some(tunnel.id.clone()),
             );
             self.runtime.spawn(async move {
                 if let Err(message) = TunnelManager::stop_tunnel(manager, &tunnel.id).await {
@@ -371,28 +375,20 @@ impl TunnelMateApp {
         };
         self.statuses
             .insert(tunnel.id.clone(), TunnelStatus::Connecting);
-        self.notice = Some(
+        self.show_progress_notice(
             if self.language == Language::Zh {
                 format!("正在连接“{}”…", tunnel.name)
             } else {
                 format!("Connecting to “{}”…", tunnel.name)
-            }
-            .into(),
+            },
+            Some(tunnel.id.clone()),
         );
         let manager = self.manager.clone();
         let sender = self.messages.clone();
         let tunnel_name = tunnel.name.clone();
-        let log_sender = sender.clone();
-        let log_tunnel_id = tunnel.id.clone();
-        let log_sink = LogSink::callback(move |message| {
-            let _ = log_sender.try_send(AppMessage::Log {
-                tunnel_id: log_tunnel_id.clone(),
-                message,
-            });
-        });
         self.runtime.spawn(async move {
             if let Err(message) =
-                TunnelManager::start_tunnel(manager, tunnel, passphrase, log_sink).await
+                TunnelManager::start_tunnel(manager, tunnel, passphrase, LogSink::Silent).await
             {
                 let _ = sender
                     .send(AppMessage::OperationError {
@@ -457,9 +453,10 @@ impl TunnelMateApp {
                 }
                 Err(error) => {
                     let _ = sender
-                        .send(AppMessage::FileOperation(format!(
-                            "{error_prefix}: {error}"
-                        )))
+                        .send(AppMessage::FileOperation {
+                            message: format!("{error_prefix}: {error}"),
+                            transient: false,
+                        })
                         .await;
                 }
             }
@@ -518,9 +515,10 @@ impl TunnelMateApp {
                 }
                 Err(error) => {
                     let _ = sender
-                        .send(AppMessage::FileOperation(format!(
-                            "{error_prefix}: {error}"
-                        )))
+                        .send(AppMessage::FileOperation {
+                            message: format!("{error_prefix}: {error}"),
+                            transient: false,
+                        })
                         .await;
                 }
             }

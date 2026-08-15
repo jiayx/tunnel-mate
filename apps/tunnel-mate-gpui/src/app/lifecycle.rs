@@ -109,11 +109,13 @@ impl TunnelMateApp {
             selected_tunnel,
             form: None,
             notice: None,
+            next_notice_id: 0,
+            notice_task: None,
             load_error,
             statuses,
             pending_starts: HashSet::new(),
-            logs: HashMap::new(),
-            events,
+            events: Arc::new(ActivityEvents::new(events)),
+            activity_scroll: UniformListScrollHandle::new(),
             diagnostics: None,
             settings_form: None,
             pending_import: None,
@@ -171,10 +173,18 @@ impl TunnelMateApp {
                 let restart_after_stop =
                     status == TunnelStatus::Stopped && self.pending_starts.remove(&tunnel_id);
                 match status {
-                    TunnelStatus::Running | TunnelStatus::Stopped => self.notice = None,
+                    TunnelStatus::Running | TunnelStatus::Stopped => {
+                        let has_pending_tunnels = self.statuses.values().any(|status| {
+                            matches!(
+                                status,
+                                TunnelStatus::Connecting | TunnelStatus::Reconnecting
+                            )
+                        });
+                        self.clear_progress_notice(&tunnel_id, has_pending_tunnels);
+                    }
                     TunnelStatus::Failed if !intervention => {
                         if let Some(message) = payload.message {
-                            self.notice = Some(self.language.runtime_message(&message).into());
+                            self.show_persistent_notice(self.language.runtime_message(&message));
                         }
                     }
                     _ => {}
@@ -185,34 +195,20 @@ impl TunnelMateApp {
                 }
             }
             AppMessage::Runtime(RuntimeEvent::Activity(event)) => {
-                self.events.retain(|existing| existing.id != event.id);
                 self.events.push(event);
-                if self.events.len() > 1000 {
-                    self.events.drain(..self.events.len() - 1000);
-                }
-            }
-            AppMessage::Log { tunnel_id, message } => {
-                let logs = self.logs.entry(tunnel_id).or_default();
-                logs.push(message);
-                if logs.len() > 2000 {
-                    logs.drain(..logs.len() - 2000);
-                }
             }
             AppMessage::OperationError {
                 tunnel_name,
                 message,
             } => {
-                self.notice = Some(
-                    if self.language == Language::Zh {
-                        format!(
-                            "“{tunnel_name}”操作失败：{}",
-                            self.language.runtime_message(&message)
-                        )
-                    } else {
-                        format!("Operation failed for “{tunnel_name}”: {message}")
-                    }
-                    .into(),
-                );
+                self.show_persistent_notice(if self.language == Language::Zh {
+                    format!(
+                        "“{tunnel_name}”操作失败：{}",
+                        self.language.runtime_message(&message)
+                    )
+                } else {
+                    format!("Operation failed for “{tunnel_name}”: {message}")
+                });
             }
             AppMessage::DeleteReady(tunnel_id) => {
                 if self.pending_delete.as_deref() == Some(tunnel_id.as_str()) {
@@ -225,23 +221,20 @@ impl TunnelMateApp {
                 message,
             } => {
                 self.pending_delete = None;
-                self.notice = Some(
-                    if self.language == Language::Zh {
-                        format!(
-                            "无法删除“{tunnel_name}”：停止连接失败：{}",
-                            self.language.runtime_message(&message)
-                        )
-                    } else {
-                        format!(
-                            "Could not delete “{tunnel_name}” because stopping it failed: {message}"
-                        )
-                    }
-                    .into(),
-                );
+                self.show_persistent_notice(if self.language == Language::Zh {
+                    format!(
+                        "无法删除“{tunnel_name}”：停止连接失败：{}",
+                        self.language.runtime_message(&message)
+                    )
+                } else {
+                    format!(
+                        "Could not delete “{tunnel_name}” because stopping it failed: {message}"
+                    )
+                });
             }
             AppMessage::Diagnostics(steps) => {
                 self.diagnostics = Some(steps);
-                self.notice = None;
+                self.clear_notice();
             }
             AppMessage::ImportSelected(config) => {
                 if self.statuses.values().any(|status| {
@@ -260,7 +253,7 @@ impl TunnelMateApp {
             AppMessage::ImportFailed(message) => {
                 self.settings_form = None;
                 self.pending_import = None;
-                self.notice = Some(message.into());
+                self.show_persistent_notice(message);
             }
             AppMessage::ConfigImported(config) => {
                 self.config = config;
@@ -285,23 +278,33 @@ impl TunnelMateApp {
                 for tunnel_id in &auto_start_ids {
                     self.start_tunnel_with_passphrase(tunnel_id.clone(), None, cx);
                 }
-                self.notice = Some(
-                    if auto_start_ids.is_empty() {
+                if auto_start_ids.is_empty() {
+                    self.show_transient_notice(
                         self.language
-                            .pick("配置已导入并保存", "Configuration imported and saved")
-                            .to_string()
-                    } else if self.language == Language::Zh {
-                        format!("配置已导入，正在自动连接 {} 个隧道", auto_start_ids.len())
-                    } else {
-                        format!(
-                            "Configuration imported; connecting {} tunnel(s)",
-                            auto_start_ids.len()
-                        )
-                    }
-                    .into(),
-                );
+                            .pick("配置已导入并保存", "Configuration imported and saved"),
+                        cx,
+                    );
+                } else {
+                    self.show_progress_notice(
+                        if self.language == Language::Zh {
+                            format!("配置已导入，正在自动连接 {} 个隧道", auto_start_ids.len())
+                        } else {
+                            format!(
+                                "Configuration imported; connecting {} tunnel(s)",
+                                auto_start_ids.len()
+                            )
+                        },
+                        None,
+                    );
+                }
             }
-            AppMessage::FileOperation(message) => self.notice = Some(message.into()),
+            AppMessage::FileOperation { message, transient } => {
+                if transient {
+                    self.show_transient_notice(message, cx);
+                } else {
+                    self.show_persistent_notice(message);
+                }
+            }
             AppMessage::PrivateKeySelected { target, path } => {
                 if let Some(form) = &self.form {
                     let input = match target {
@@ -315,7 +318,10 @@ impl TunnelMateApp {
                 set_dock_visible(true);
                 cx.activate(true);
                 for handle in cx.windows() {
-                    let _ = handle.update(cx, |_, window, _| window.activate_window());
+                    let _ = handle.update(cx, |_, window, _| {
+                        show_window(window);
+                        window.activate_window();
+                    });
                 }
             }
             AppMessage::Tray(id) if id == "quit" => {
@@ -352,9 +358,9 @@ impl TunnelMateApp {
                 self.language == Language::Zh,
             ) {
                 Ok(tray) => self._tray = Some(tray),
-                Err(error) => self.notice = Some(error.into()),
+                Err(error) => self.show_persistent_notice(error),
             },
-            (_, Err(error)) => self.notice = Some(error.into()),
+            (_, Err(error)) => self.show_persistent_notice(error),
         }
     }
 }

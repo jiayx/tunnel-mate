@@ -45,61 +45,13 @@ impl TunnelMateApp {
         match EventLogger::new().clear_events() {
             Ok(()) => {
                 self.events.clear();
-                self.notice = Some(
-                    self.language
-                        .pick("活动记录已清空", "Activity cleared")
-                        .into(),
+                self.show_transient_notice(
+                    self.language.pick("活动记录已清空", "Activity cleared"),
+                    cx,
                 );
             }
-            Err(error) => self.notice = Some(format!("清空失败：{error}").into()),
+            Err(error) => self.show_persistent_notice(format!("清空失败：{error}")),
         }
         cx.notify();
-    }
-
-    pub(crate) fn clear_selected_logs(&mut self, cx: &mut Context<Self>) {
-        if let Some(id) = &self.selected_tunnel {
-            self.logs.remove(id);
-        }
-        self.notice = Some(
-            self.language
-                .pick("当前隧道日志已清空", "Tunnel logs cleared")
-                .into(),
-        );
-        cx.notify();
-    }
-
-    pub(crate) fn copy_selected_logs(&mut self, cx: &mut Context<Self>) {
-        let content = self
-            .selected_tunnel
-            .as_ref()
-            .and_then(|id| self.logs.get(id))
-            .map(|logs| logs.join("\n"))
-            .unwrap_or_default();
-        cx.write_to_clipboard(ClipboardItem::new_string(content));
-        self.notice = Some(self.language.pick("日志已复制", "Logs copied").into());
-        cx.notify();
-    }
-
-    pub(crate) fn export_selected_logs(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = &self.selected_tunnel else {
-            return;
-        };
-        let content = self
-            .logs
-            .get(id)
-            .map(|logs| logs.join("\n"))
-            .unwrap_or_default();
-        let receiver = cx.prompt_for_new_path(Path::new("."), Some("tunnel-mate.log"));
-        let sender = self.messages.clone();
-        cx.spawn(async move |_, _| {
-            if let Ok(Ok(Some(path))) = receiver.await {
-                let message = match fs::write(&path, content) {
-                    Ok(()) => format!("日志已导出到 {}", path.display()),
-                    Err(error) => format!("日志导出失败：{error}"),
-                };
-                let _ = sender.send(AppMessage::FileOperation(message)).await;
-            }
-        })
-        .detach();
     }
 }

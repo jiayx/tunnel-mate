@@ -14,7 +14,6 @@ impl TunnelMateApp {
                 TunnelFilter::Group(group_id) => tunnel.group_id.as_ref() == Some(group_id),
             })
             .map(|tunnel| tunnel.id.clone());
-        self.notice = None;
         cx.notify();
     }
 
@@ -25,20 +24,13 @@ impl TunnelMateApp {
         }
         form.ssh_hosts = parse_ssh_config(self.config.settings.ssh_config_path.as_deref());
         self.form = Some(form);
-        self.notice = None;
+        self.clear_notice();
         cx.notify();
     }
 
     pub(crate) fn close_create_sheet(&mut self, cx: &mut Context<Self>) {
         self.form = None;
         cx.notify();
-    }
-
-    pub(crate) fn edit_selected(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self.selected_tunnel.clone() else {
-            return;
-        };
-        self.edit_tunnel(id, cx);
     }
 
     pub(crate) fn edit_tunnel(&mut self, id: String, cx: &mut Context<Self>) {
@@ -66,25 +58,9 @@ impl TunnelMateApp {
             let mut form = TunnelForm::new(Some(&tunnel), self.language, cx);
             form.ssh_hosts = parse_ssh_config(self.config.settings.ssh_config_path.as_deref());
             self.form = Some(form);
-            self.notice = None;
+            self.clear_notice();
             cx.notify();
         }
-    }
-
-    pub(crate) fn open_advanced_selected(&mut self, cx: &mut Context<Self>) {
-        self.edit_selected(cx);
-        if let Some(form) = &mut self.form {
-            form.advanced = true;
-        }
-        cx.notify();
-    }
-
-    pub(crate) fn request_delete_selected(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self.selected_tunnel.clone() else {
-            return;
-        };
-        self.delete_confirmation = Some(id);
-        cx.notify();
     }
 
     pub(crate) fn request_delete_from_form(&mut self, cx: &mut Context<Self>) {
@@ -119,13 +95,13 @@ impl TunnelMateApp {
             self.pending_starts.remove(&id);
             self.pending_delete = Some(id.clone());
             self.form = None;
-            self.notice = Some(
+            self.show_progress_notice(
                 if self.language == Language::Zh {
                     format!("正在停止并删除“{}”…", tunnel.name)
                 } else {
                     format!("Stopping and deleting “{}”…", tunnel.name)
-                }
-                .into(),
+                },
+                Some(id.clone()),
             );
             let manager = self.manager.clone();
             let sender = self.messages.clone();
@@ -165,41 +141,28 @@ impl TunnelMateApp {
             Ok(()) => {
                 self.config = next_config;
                 self.statuses.remove(&id);
-                self.logs.remove(&id);
                 self.pending_starts.remove(&id);
                 self.pending_delete = None;
                 self.selected_tunnel = None;
                 self.form = None;
-                self.notice = Some(
-                    if self.language == Language::Zh {
-                        format!("已删除“{name}”")
-                    } else {
-                        format!("Deleted “{name}”")
-                    }
-                    .into(),
-                );
+                let message = if self.language == Language::Zh {
+                    format!("已删除“{name}”")
+                } else {
+                    format!("Deleted “{name}”")
+                };
+                self.show_transient_notice(message, cx);
                 self.refresh_tray();
             }
             Err(error) => {
                 self.pending_delete = None;
-                self.notice = Some(
-                    if self.language == Language::Zh {
-                        format!("删除失败：{error}")
-                    } else {
-                        format!("Could not delete tunnel: {error}")
-                    }
-                    .into(),
-                );
+                self.show_persistent_notice(if self.language == Language::Zh {
+                    format!("删除失败：{error}")
+                } else {
+                    format!("Could not delete tunnel: {error}")
+                });
             }
         }
         cx.notify();
-    }
-
-    pub(crate) fn run_selected_diagnostics(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self.selected_tunnel.clone() else {
-            return;
-        };
-        self.run_tunnel_diagnostics(id, cx);
     }
 
     pub(crate) fn run_tunnel_diagnostics(&mut self, id: String, cx: &mut Context<Self>) {
@@ -216,7 +179,7 @@ impl TunnelMateApp {
             DiagnosticLanguage::English
         };
         self.diagnostics = Some(Vec::new());
-        self.notice = None;
+        self.clear_notice();
         self.runtime.spawn(async move {
             let steps =
                 run_diagnostics(&tunnel, &all, None, language, listener_is_current_tunnel).await;
@@ -249,8 +212,11 @@ impl TunnelMateApp {
         });
     }
 
-    pub(crate) fn request_close(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn request_close(&mut self, _window: &Window, cx: &mut Context<Self>) {
         if self.config.settings.close_to_tray && self._tray.is_some() {
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            hide_window(_window);
+            #[cfg(not(any(target_os = "windows", target_os = "linux")))]
             cx.hide();
             set_dock_visible(false);
         } else {

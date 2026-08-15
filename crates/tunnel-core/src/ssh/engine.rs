@@ -204,6 +204,33 @@ pub enum KnownHostsPolicy {
     RequireKnown,
 }
 
+fn client_config(keep_alive_interval: u32) -> Config {
+    Config {
+        nodelay: true,
+        // Keepalive replies already prove that an otherwise idle SSH session is
+        // healthy. Treating application inactivity as a failure caused valid
+        // tunnels to be closed simply because no forwarded traffic was flowing.
+        inactivity_timeout: None,
+        keepalive_interval: if keep_alive_interval > 0 {
+            Some(Duration::from_secs(keep_alive_interval as u64))
+        } else {
+            None
+        },
+        ..Default::default()
+    }
+}
+
+fn session_end_message(result: Result<(), russh::Error>) -> String {
+    match result {
+        Ok(()) => "SSH session ended".to_string(),
+        Err(russh::Error::KeepaliveTimeout) => "SSH keepalive timed out".to_string(),
+        Err(russh::Error::InactivityTimeout) => "SSH session inactivity timed out".to_string(),
+        Err(russh::Error::HUP) => "SSH connection closed by remote host".to_string(),
+        Err(russh::Error::Disconnect) => "SSH session disconnected by remote host".to_string(),
+        Err(error) => format!("SSH session disconnected: {error}"),
+    }
+}
+
 impl SshSession {
     pub async fn connect(options: ConnectOptions<'_>) -> Result<Self, String> {
         let ConnectOptions {
@@ -222,23 +249,7 @@ impl SshSession {
             .unwrap_or_default();
         let timeout_secs = settings.connect_timeout as u64;
         let keep_alive = settings.keep_alive_interval;
-
-        let inactivity_timeout = if keep_alive > 0 {
-            Some(Duration::from_secs(keep_alive as u64 * 3))
-        } else {
-            None
-        };
-
-        let config = Arc::new(Config {
-            nodelay: true,
-            inactivity_timeout,
-            keepalive_interval: if keep_alive > 0 {
-                Some(Duration::from_secs(keep_alive as u64))
-            } else {
-                None
-            },
-            ..Default::default()
-        });
+        let config = Arc::new(client_config(keep_alive));
 
         let (forwarded_tx, forwarded_rx) = mpsc::unbounded_channel();
         let host_key_error = Arc::new(StdMutex::new(None));
@@ -397,6 +408,20 @@ impl SshSession {
 
     pub async fn is_alive(&self) -> bool {
         !self.handle.lock().await.is_closed()
+    }
+
+    pub async fn closed_reason(handle: &SharedSshHandle) -> Option<String> {
+        let mut handle = handle.lock().await;
+        if !handle.is_closed() {
+            return None;
+        }
+
+        Some(
+            match tokio::time::timeout(Duration::from_secs(1), &mut *handle).await {
+                Ok(result) => session_end_message(result),
+                Err(_) => "SSH session closed without a reported reason".to_string(),
+            },
+        )
     }
 
     pub async fn disconnect(&mut self) {
@@ -701,5 +726,29 @@ mod tests {
             Some(ssh_key::HashAlg::Sha256)
         );
         assert!(select_rsa_hash(Some(None)).is_err());
+    }
+
+    #[test]
+    fn keepalive_does_not_turn_idle_sessions_into_failures() {
+        let enabled = client_config(30);
+        assert_eq!(enabled.keepalive_interval, Some(Duration::from_secs(30)));
+        assert_eq!(enabled.keepalive_max, 3);
+        assert_eq!(enabled.inactivity_timeout, None);
+
+        let disabled = client_config(0);
+        assert_eq!(disabled.keepalive_interval, None);
+        assert_eq!(disabled.inactivity_timeout, None);
+    }
+
+    #[test]
+    fn session_end_messages_preserve_the_failure_reason() {
+        assert_eq!(
+            session_end_message(Err(russh::Error::KeepaliveTimeout)),
+            "SSH keepalive timed out"
+        );
+        assert_eq!(
+            session_end_message(Err(russh::Error::HUP)),
+            "SSH connection closed by remote host"
+        );
     }
 }

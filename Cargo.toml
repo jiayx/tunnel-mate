@@ -13,3 +13,8 @@ version = "0.5.6"
 [profile.release]
 lto = "thin"
 strip = true
+
+# Keep workspace crates quick to rebuild while making the GPUI rendering stack
+# representative enough for local interaction and scrolling checks.
+[profile.dev.package."*"]
+opt-level = 2

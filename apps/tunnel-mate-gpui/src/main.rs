@@ -9,17 +9,19 @@ mod single_instance;
 mod system;
 mod text_input;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
+use std::ops::Range;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use gpui::{
     actions, anchored, deferred, div, img, point, prelude::*, px, relative, rgb, rgba, size,
-    Anchor, AnchoredPositionMode, App, Bounds, ClipboardItem, Context, Entity, FontWeight,
-    IntoElement, KeyBinding, MouseButton, PathPromptOptions, RenderImage, Rgba, SharedString,
-    Subscription, Task, Window, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowHandle, WindowOptions,
+    uniform_list, Anchor, AnchoredPositionMode, App, Bounds, ClipboardItem, Context, Entity,
+    FontWeight, IntoElement, KeyBinding, MouseButton, PathPromptOptions, RenderImage, Rgba,
+    SharedString, Subscription, Task, UniformListScrollHandle, Window, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowOptions,
 };
 #[cfg(target_os = "macos")]
 use gpui::{Menu as AppMenu, MenuItem as AppMenuItem, OsAction, SystemMenuType};
@@ -85,6 +87,23 @@ fn ssh_host_matches(host: &SshHostConfig, current: &str) -> bool {
                 .host_name
                 .as_deref()
                 .is_some_and(|host_name| host_name.eq_ignore_ascii_case(current)))
+}
+
+fn notice_is_current(current_id: Option<u64>, expected_id: u64) -> bool {
+    current_id == Some(expected_id)
+}
+
+fn progress_notice_clears_on_status(
+    kind: NoticeKind,
+    notice_tunnel_id: Option<&str>,
+    updated_tunnel_id: &str,
+    has_pending_tunnels: bool,
+) -> bool {
+    kind == NoticeKind::Progress
+        && match notice_tunnel_id {
+            Some(notice_tunnel_id) => notice_tunnel_id == updated_tunnel_id,
+            None => !has_pending_tunnels,
+        }
 }
 
 const APP_BG: Rgba = glass(0x0b1019, 0.90);
@@ -303,7 +322,10 @@ fn main() {
         set_dock_visible(true);
         cx.activate(true);
         for handle in cx.windows() {
-            let _ = handle.update(cx, |_, window, _| window.activate_window());
+            let _ = handle.update(cx, |_, window, _| {
+                show_window(window);
+                window.activate_window();
+            });
         }
     });
     application.run(move |cx: &mut App| {
@@ -318,9 +340,9 @@ fn main() {
             .open_window(platform_window_options(bounds), |window, cx| {
                 let app = cx.new(TunnelMateApp::load);
                 let weak = app.downgrade();
-                window.on_window_should_close(cx, move |_, cx| {
+                window.on_window_should_close(cx, move |window, cx| {
                     if let Some(app) = weak.upgrade() {
-                        app.update(cx, |app, cx| app.request_close(cx));
+                        app.update(cx, |app, cx| app.request_close(window, cx));
                     } else {
                         cx.quit();
                     }
@@ -337,17 +359,67 @@ fn main() {
         // installed afterwards. Other platforms only register their conventional shortcuts.
         install_native_behavior(cx, Language::system());
         if minimized_arg {
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            let _ = window_handle.update(cx, |_, window, _| hide_window(window));
+            #[cfg(not(any(target_os = "windows", target_os = "linux")))]
             cx.hide();
         } else {
             cx.activate(true);
-            let _ = window_handle.update(cx, |_, window, _| window.activate_window());
+            let _ = window_handle.update(cx, |_, window, _| {
+                show_window(window);
+                window.activate_window();
+            });
         }
     });
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_host_key_prompt, ssh_host_matches, HostKeyIssue, Language, SshHostConfig};
+    use super::{
+        notice_is_current, parse_host_key_prompt, progress_notice_clears_on_status,
+        ssh_host_matches, HostKeyIssue, Language, NoticeKind, SshHostConfig,
+    };
+
+    #[test]
+    fn only_dismisses_the_notice_that_started_the_timer() {
+        assert!(notice_is_current(Some(7), 7));
+        assert!(!notice_is_current(Some(8), 7));
+        assert!(!notice_is_current(None, 7));
+    }
+
+    #[test]
+    fn status_changes_only_dismiss_the_matching_progress_notice() {
+        assert!(progress_notice_clears_on_status(
+            NoticeKind::Progress,
+            Some("a"),
+            "a",
+            true
+        ));
+        assert!(!progress_notice_clears_on_status(
+            NoticeKind::Progress,
+            Some("b"),
+            "a",
+            false
+        ));
+        assert!(!progress_notice_clears_on_status(
+            NoticeKind::Persistent,
+            Some("a"),
+            "a",
+            false
+        ));
+        assert!(!progress_notice_clears_on_status(
+            NoticeKind::Progress,
+            None,
+            "a",
+            true
+        ));
+        assert!(progress_notice_clears_on_status(
+            NoticeKind::Progress,
+            None,
+            "a",
+            false
+        ));
+    }
 
     #[test]
     fn parses_host_key_intervention_message() {
