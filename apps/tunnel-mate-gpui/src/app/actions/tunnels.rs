@@ -212,12 +212,12 @@ impl TunnelMateApp {
         });
     }
 
-    pub(crate) fn request_close(&mut self, _window: &Window, cx: &mut Context<Self>) {
+    pub(crate) fn request_close(&mut self, _window: &Window, _cx: &mut Context<Self>) {
         if self.config.settings.close_to_tray && self._tray.is_some() {
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             hide_window(_window);
             #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-            cx.hide();
+            _cx.hide();
             set_dock_visible(false);
         } else {
             self.request_quit();

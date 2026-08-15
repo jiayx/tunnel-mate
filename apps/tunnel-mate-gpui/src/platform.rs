@@ -9,7 +9,7 @@ use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE, SW_SHOW};
 
 #[cfg(target_os = "windows")]
 fn set_window_visible(window: &Window, visible: bool) {
-    let Ok(handle) = window.window_handle() else {
+    let Ok(handle) = HasWindowHandle::window_handle(window) else {
         return;
     };
     let RawWindowHandle::Win32(handle) = handle.as_raw() else {
