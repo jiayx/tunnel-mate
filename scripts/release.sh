@@ -109,9 +109,9 @@ awk -v new_version="$version" '
 ' Cargo.toml > "$version_file"
 mv "$version_file" Cargo.toml
 
-# Refresh the workspace package versions in Cargo.lock without compiling,
-# testing, packaging, or accessing the network.
-cargo metadata --format-version 1 --offline >/dev/null
+# Refresh the workspace package versions in Cargo.lock without loading
+# target-specific dependency metadata or accessing the network.
+cargo metadata --format-version 1 --no-deps --offline >/dev/null
 
 git add Cargo.toml Cargo.lock
 git commit -m "release: $tag"
