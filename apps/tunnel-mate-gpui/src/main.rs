@@ -202,10 +202,14 @@ fn close_to_tray_title(language: Language) -> &'static str {
     }
 }
 
-fn window_content_top_padding() -> gpui::Pixels {
-    if cfg!(target_os = "macos") {
-        px(38.0)
-    } else {
+fn window_content_top_padding(app: &TunnelMateApp) -> gpui::Pixels {
+    #[cfg(target_os = "macos")]
+    {
+        px(app.window_content_top_inset)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
         px(0.0)
     }
 }
@@ -242,7 +246,7 @@ impl Render for TunnelMateApp {
             .key_context("TunnelMate")
             .flex()
             .size_full()
-            .pt(window_content_top_padding())
+            .pt(window_content_top_padding(self))
             .bg(APP_BG)
             .text_color(TEXT);
         root.child(self.render_sidebar(cx))
@@ -377,9 +381,11 @@ fn main() {
         let app = window_handle
             .entity(cx)
             .expect("failed to access Tunnel Mate root view");
+        #[cfg(target_os = "macos")]
+        let _ = window_handle.update(cx, |app, window, _| {
+            app._window_layout_observer = observe_window_layout(window, app.messages.clone());
+        });
         register_global_actions(cx, window_handle, app);
-        // On macOS tray initialization replaces NSApp's main menu, so native behavior is
-        // installed afterwards. Other platforms only register their conventional shortcuts.
         install_native_behavior(cx, Language::system());
         if start_minimized {
             #[cfg(any(target_os = "windows", target_os = "linux"))]

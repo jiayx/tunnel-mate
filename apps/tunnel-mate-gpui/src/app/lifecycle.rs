@@ -129,6 +129,10 @@ impl TunnelMateApp {
             manager,
             runtime,
             messages,
+            #[cfg(target_os = "macos")]
+            window_content_top_inset: WINDOWED_CONTENT_TOP_INSET,
+            #[cfg(target_os = "macos")]
+            _window_layout_observer: None,
             _event_task: event_task,
             _keystroke_subscription: keystroke_subscription,
             _tray: tray,
@@ -137,6 +141,12 @@ impl TunnelMateApp {
 
     pub(super) fn handle_message(&mut self, message: AppMessage, cx: &mut Context<Self>) {
         match message {
+            #[cfg(target_os = "macos")]
+            AppMessage::WindowContentTopInset(top_inset) => {
+                if (self.window_content_top_inset - top_inset).abs() >= 0.5 {
+                    self.window_content_top_inset = top_inset;
+                }
+            }
             AppMessage::Runtime(RuntimeEvent::Status(payload)) => {
                 let mut intervention = false;
                 if let Some(message) = payload.message.as_deref() {

@@ -6,6 +6,21 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::HWND;
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE, SW_SHOW};
+#[cfg(target_os = "macos")]
+use {
+    core::cell::Cell,
+    objc2::{
+        define_class, msg_send, rc::Retained, runtime::NSObject, sel, DefinedClass,
+        MainThreadMarker, MainThreadOnly,
+    },
+    objc2_app_kit::{
+        NSApplication, NSWindow, NSWindowButton, NSWindowDidUpdateNotification, NSWindowStyleMask,
+    },
+    objc2_foundation::{NSNotification, NSNotificationCenter, NSObjectProtocol},
+};
+
+#[cfg(target_os = "macos")]
+pub(crate) const WINDOWED_CONTENT_TOP_INSET: f32 = 38.0;
 
 #[cfg(target_os = "windows")]
 fn set_window_visible(window: &Window, visible: bool) {
@@ -27,25 +42,163 @@ pub(crate) fn hide_window(window: &Window) {
 }
 
 #[cfg(target_os = "macos")]
-fn with_native_window(window: &Window, action: impl FnOnce(&objc2_app_kit::NSWindow)) {
+fn native_window(window: &Window) -> Option<Retained<NSWindow>> {
     let Ok(handle) = HasWindowHandle::window_handle(window) else {
-        return;
+        return None;
     };
     let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
-        return;
+        return None;
     };
-    let Some(view) = (unsafe {
+    let view = (unsafe {
         handle
             .ns_view
             .as_ptr()
             .cast::<objc2_app_kit::NSView>()
             .as_ref()
-    }) else {
-        return;
-    };
-    if let Some(native_window) = view.window() {
+    })?;
+    view.window()
+}
+
+#[cfg(target_os = "macos")]
+fn with_native_window(window: &Window, action: impl FnOnce(&NSWindow)) {
+    if let Some(native_window) = native_window(window) {
         action(&native_window);
     }
+}
+
+#[cfg(target_os = "macos")]
+struct ContentLayoutObserverIvars {
+    window: Retained<NSWindow>,
+    sender: async_channel::Sender<AppMessage>,
+    last_top_inset: Cell<f32>,
+    windowed_top_inset: Cell<f32>,
+}
+
+#[cfg(target_os = "macos")]
+define_class!(
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "TunnelMateContentLayoutObserver"]
+    #[ivars = ContentLayoutObserverIvars]
+    struct NativeContentLayoutObserver;
+
+    impl NativeContentLayoutObserver {
+        #[unsafe(method(windowDidUpdate:))]
+        fn window_did_update(&self, _notification: &NSNotification) {
+            self.publish_top_inset();
+        }
+    }
+
+    unsafe impl NSObjectProtocol for NativeContentLayoutObserver {}
+);
+
+#[cfg(target_os = "macos")]
+impl NativeContentLayoutObserver {
+    fn new(
+        window: Retained<NSWindow>,
+        sender: async_channel::Sender<AppMessage>,
+    ) -> Retained<Self> {
+        let main_thread =
+            MainThreadMarker::new().expect("window observer must use the main thread");
+        let observer = Self::alloc(main_thread).set_ivars(ContentLayoutObserverIvars {
+            window,
+            sender,
+            last_top_inset: Cell::new(f32::NAN),
+            windowed_top_inset: Cell::new(WINDOWED_CONTENT_TOP_INSET),
+        });
+        let observer: Retained<Self> = unsafe { msg_send![super(observer), init] };
+        unsafe {
+            NSNotificationCenter::defaultCenter().addObserver_selector_name_object(
+                &observer,
+                sel!(windowDidUpdate:),
+                Some(NSWindowDidUpdateNotification),
+                Some(&observer.ivars().window),
+            );
+        }
+        observer.publish_top_inset();
+        observer
+    }
+
+    fn publish_top_inset(&self) {
+        let content_top_inset = self
+            .ivars()
+            .window
+            .contentView()
+            .map_or(0.0, |view| view.safeAreaInsets().top.max(0.0) as f32);
+        let is_fullscreen = self
+            .ivars()
+            .window
+            .styleMask()
+            .contains(NSWindowStyleMask::FullScreen);
+        let top_inset = if is_fullscreen {
+            self.fullscreen_top_inset()
+        } else {
+            if content_top_inset > 0.0 {
+                self.ivars().windowed_top_inset.set(content_top_inset);
+            }
+            WINDOWED_CONTENT_TOP_INSET
+        };
+        if (self.ivars().last_top_inset.get() - top_inset).abs() >= 0.5
+            || self.ivars().last_top_inset.get().is_nan()
+        {
+            self.ivars().last_top_inset.set(top_inset);
+            let _ = self
+                .ivars()
+                .sender
+                .try_send(AppMessage::WindowContentTopInset(top_inset));
+        }
+    }
+
+    fn fullscreen_top_inset(&self) -> f32 {
+        let window = &self.ivars().window;
+        let application = NSApplication::sharedApplication(self.mtm());
+        let menu_bar_height = application
+            .mainMenu()
+            .map_or(0.0, |menu| menu.menuBarHeight().max(0.0) as f32);
+        let revealed_height = menu_bar_height + self.ivars().windowed_top_inset.get();
+        let reveal_progress = window
+            .standardWindowButton(NSWindowButton::CloseButton)
+            .and_then(|button| unsafe { button.superview() })
+            .and_then(|container| unsafe { container.superview() })
+            .map_or(0.0, |titlebar| {
+                let frame = titlebar.frame();
+                if frame.size.height > 0.0 {
+                    ((frame.origin.y + frame.size.height) / frame.size.height).clamp(0.0, 1.0)
+                        as f32
+                } else {
+                    0.0
+                }
+            });
+        revealed_height * reveal_progress
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for NativeContentLayoutObserver {
+    fn drop(&mut self) {
+        unsafe {
+            NSNotificationCenter::defaultCenter().removeObserver_name_object(
+                self,
+                Some(NSWindowDidUpdateNotification),
+                Some(&self.ivars().window),
+            );
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) struct WindowLayoutObserver {
+    _native: Retained<NativeContentLayoutObserver>,
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn observe_window_layout(
+    window: &Window,
+    sender: async_channel::Sender<AppMessage>,
+) -> Option<WindowLayoutObserver> {
+    Some(WindowLayoutObserver {
+        _native: NativeContentLayoutObserver::new(native_window(window)?, sender),
+    })
 }
 
 #[cfg(target_os = "macos")]
@@ -211,7 +364,7 @@ pub(crate) fn platform_window_options(bounds: Bounds<gpui::Pixels>) -> WindowOpt
         options.titlebar = Some(gpui::TitlebarOptions {
             title: None,
             appears_transparent: true,
-            traffic_light_position: Some(point(px(16.0), px(16.0))),
+            traffic_light_position: Some(point(px(16.0), px(12.0))),
         });
     }
 
@@ -242,6 +395,26 @@ pub(crate) fn platform_window_options(bounds: Bounds<gpui::Pixels>) -> WindowOpt
     options
 }
 
+#[cfg(target_os = "macos")]
+fn update_window_for_global_action(
+    cx: &mut App,
+    window_handle: WindowHandle<TunnelMateApp>,
+    update: impl FnOnce(&mut TunnelMateApp, &mut Window, &mut Context<TunnelMateApp>) + 'static,
+) {
+    cx.defer(move |cx| {
+        let _ = window_handle.update(cx, update);
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+fn update_window_for_global_action(
+    cx: &mut App,
+    window_handle: WindowHandle<TunnelMateApp>,
+    update: impl FnOnce(&mut TunnelMateApp, &mut Window, &mut Context<TunnelMateApp>) + 'static,
+) {
+    let _ = window_handle.update(cx, update);
+}
+
 pub(crate) fn register_global_actions(
     cx: &mut App,
     window_handle: WindowHandle<TunnelMateApp>,
@@ -259,7 +432,9 @@ pub(crate) fn register_global_actions(
 
     let handle = window_handle;
     cx.on_action(move |_: &CloseWindow, cx| {
-        let _ = handle.update(cx, |app, window, cx| app.request_close(window, cx));
+        update_window_for_global_action(cx, handle, |app, window, cx| {
+            app.request_close(window, cx)
+        });
     });
 
     let weak = app.downgrade();
@@ -271,21 +446,21 @@ pub(crate) fn register_global_actions(
 
     let handle = window_handle;
     cx.on_action(move |_: &MinimizeWindow, cx| {
-        let _ = handle.update(cx, |_, window, _| window.minimize_window());
+        update_window_for_global_action(cx, handle, |_, window, _| window.minimize_window());
     });
 
     let handle = window_handle;
     cx.on_action(move |_: &ZoomWindow, cx| {
-        let _ = handle.update(cx, |_, window, _| window.zoom_window());
+        update_window_for_global_action(cx, handle, |_, window, _| window.zoom_window());
     });
 
     let handle = window_handle;
     cx.on_action(move |_: &ToggleFullScreen, cx| {
-        let _ = handle.update(cx, |_, window, _| window.toggle_fullscreen());
+        update_window_for_global_action(cx, handle, |_, window, _| window.toggle_fullscreen());
     });
 
     cx.on_action(move |_: &BringAllToFront, cx| {
         cx.activate(true);
-        let _ = window_handle.update(cx, |_, window, _| window.activate_window());
+        update_window_for_global_action(cx, window_handle, |_, window, _| window.activate_window());
     });
 }

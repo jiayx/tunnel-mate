@@ -10,6 +10,8 @@ pub(crate) enum TunnelFilter {
 
 pub(crate) enum AppMessage {
     Runtime(RuntimeEvent),
+    #[cfg(target_os = "macos")]
+    WindowContentTopInset(f32),
     OperationError {
         tunnel_name: String,
         message: String,
@@ -395,6 +397,10 @@ pub(crate) struct TunnelMateApp {
     pub(crate) manager: Arc<Mutex<TunnelManager>>,
     pub(crate) runtime: Arc<Runtime>,
     pub(crate) messages: async_channel::Sender<AppMessage>,
+    #[cfg(target_os = "macos")]
+    pub(crate) window_content_top_inset: f32,
+    #[cfg(target_os = "macos")]
+    pub(crate) _window_layout_observer: Option<WindowLayoutObserver>,
     pub(crate) _event_task: Task<()>,
     pub(crate) _keystroke_subscription: Subscription,
     pub(crate) _tray: Option<tray_icon::TrayIcon>,
