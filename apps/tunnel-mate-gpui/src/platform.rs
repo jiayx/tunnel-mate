@@ -53,11 +53,6 @@ pub(crate) fn hide_window(window: &Window) {
     with_native_window(window, |window| window.orderOut(None));
 }
 
-#[cfg(target_os = "macos")]
-pub(crate) fn perform_window_close(window: &Window) {
-    with_native_window(window, |window| window.performClose(None));
-}
-
 // Wayland has no portable request for fully hiding a top-level window. GPUI's
 // minimize implementation uses xdg_toplevel.set_minimized on Wayland and
 // WM_CHANGE_STATE on X11, so this is the reliable cross-desktop fallback.
@@ -252,9 +247,6 @@ pub(crate) fn register_global_actions(
     window_handle: WindowHandle<TunnelMateApp>,
     app: Entity<TunnelMateApp>,
 ) {
-    #[cfg(target_os = "macos")]
-    let _ = window_handle;
-
     let weak = app.downgrade();
     cx.on_action(move |_: &ShowAbout, cx| {
         let _ = weak.update(cx, |app, cx| app.show_about(cx));
@@ -265,9 +257,9 @@ pub(crate) fn register_global_actions(
         let _ = weak.update(cx, |app, cx| app.open_settings(cx));
     });
 
-    #[cfg(not(target_os = "macos"))]
+    let handle = window_handle;
     cx.on_action(move |_: &CloseWindow, cx| {
-        let _ = window_handle.update(cx, |app, window, cx| app.request_close(window, cx));
+        let _ = handle.update(cx, |app, window, cx| app.request_close(window, cx));
     });
 
     let weak = app.downgrade();
@@ -277,26 +269,23 @@ pub(crate) fn register_global_actions(
 
     cx.on_action(|_: &HideApplication, cx| cx.hide());
 
-    #[cfg(not(target_os = "macos"))]
-    {
-        let handle = window_handle;
-        cx.on_action(move |_: &MinimizeWindow, cx| {
-            let _ = handle.update(cx, |_, window, _| window.minimize_window());
-        });
+    let handle = window_handle;
+    cx.on_action(move |_: &MinimizeWindow, cx| {
+        let _ = handle.update(cx, |_, window, _| window.minimize_window());
+    });
 
-        let handle = window_handle;
-        cx.on_action(move |_: &ZoomWindow, cx| {
-            let _ = handle.update(cx, |_, window, _| window.zoom_window());
-        });
+    let handle = window_handle;
+    cx.on_action(move |_: &ZoomWindow, cx| {
+        let _ = handle.update(cx, |_, window, _| window.zoom_window());
+    });
 
-        let handle = window_handle;
-        cx.on_action(move |_: &ToggleFullScreen, cx| {
-            let _ = handle.update(cx, |_, window, _| window.toggle_fullscreen());
-        });
+    let handle = window_handle;
+    cx.on_action(move |_: &ToggleFullScreen, cx| {
+        let _ = handle.update(cx, |_, window, _| window.toggle_fullscreen());
+    });
 
-        cx.on_action(move |_: &BringAllToFront, cx| {
-            cx.activate(true);
-            let _ = window_handle.update(cx, |_, window, _| window.activate_window());
-        });
-    }
+    cx.on_action(move |_: &BringAllToFront, cx| {
+        cx.activate(true);
+        let _ = window_handle.update(cx, |_, window, _| window.activate_window());
+    });
 }

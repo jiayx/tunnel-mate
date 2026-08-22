@@ -14,8 +14,6 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
 use tunnel_core::{Tunnel, TunnelStatus};
 
-#[cfg(target_os = "macos")]
-const AUTOSTART_NAME: &str = "com.jiayx.tunnel-mate";
 #[cfg(not(target_os = "macos"))]
 const AUTOSTART_NAME: &str = "Tunnel Mate";
 #[cfg(target_os = "macos")]
@@ -27,21 +25,6 @@ pub fn sync_autostart(enabled: bool, start_minimized: bool) -> Result<(), String
 
     #[cfg(not(target_os = "macos"))]
     sync_legacy_autostart(enabled, start_minimized)
-}
-
-pub fn autostart_migration_needed() -> bool {
-    #[cfg(target_os = "macos")]
-    return macos_app_bundle().ok().flatten().is_some()
-        && legacy_autostart(false)
-            .and_then(|launcher| {
-                launcher
-                    .is_enabled()
-                    .map_err(|error| format!("检查旧版开机启动状态失败：{error}"))
-            })
-            .unwrap_or(false);
-
-    #[cfg(not(target_os = "macos"))]
-    false
 }
 
 #[cfg(target_os = "macos")]
@@ -72,26 +55,13 @@ fn sync_macos_autostart(enabled: bool, start_minimized: bool) -> Result<(), Stri
             .map_err(|error| format!("关闭开机启动失败：{error}"))?;
     }
 
-    let legacy = legacy_autostart(start_minimized)?;
-    let legacy_enabled = legacy
-        .is_enabled()
-        .map_err(|error| format!("检查旧版开机启动状态失败：{error}"))?;
-    if legacy_enabled {
-        if let Err(error) = legacy.disable() {
-            if enabled && !modern_was_enabled {
-                let _ = modern.disable();
-            }
-            return Err(format!("迁移旧版开机启动失败：{error}"));
-        }
-    }
-
     verify_autostart(&modern, enabled)
 }
 
 #[cfg(target_os = "macos")]
 fn sync_pre_macos_13_autostart(enabled: bool, start_minimized: bool) -> Result<(), String> {
     let Some(login_item) = traditional_macos_login_item(start_minimized)? else {
-        return sync_legacy_autostart(enabled, start_minimized);
+        return Err("请从打包后的 Tunnel Mate.app 配置开机启动".to_string());
     };
     let login_item_was_enabled = login_item
         .is_enabled()
@@ -112,19 +82,6 @@ fn sync_pre_macos_13_autostart(enabled: bool, start_minimized: bool) -> Result<(
         login_item
             .disable()
             .map_err(|error| format!("关闭开机启动失败：{error}"))?;
-    }
-
-    let legacy = legacy_autostart(start_minimized)?;
-    if legacy
-        .is_enabled()
-        .map_err(|error| format!("检查旧版开机启动状态失败：{error}"))?
-    {
-        if let Err(error) = legacy.disable() {
-            if enabled && !login_item_was_enabled {
-                let _ = login_item.disable();
-            }
-            return Err(format!("迁移旧版开机启动失败：{error}"));
-        }
     }
 
     verify_autostart(&login_item, enabled)
@@ -163,6 +120,7 @@ fn macos_app_bundle() -> Result<Option<PathBuf>, String> {
         .map(PathBuf::from))
 }
 
+#[cfg(not(target_os = "macos"))]
 fn sync_legacy_autostart(enabled: bool, start_minimized: bool) -> Result<(), String> {
     let launcher = legacy_autostart(start_minimized)?;
     let current = launcher
@@ -187,6 +145,7 @@ fn sync_legacy_autostart(enabled: bool, start_minimized: bool) -> Result<(), Str
     verify_autostart(&launcher, enabled)
 }
 
+#[cfg(not(target_os = "macos"))]
 fn legacy_autostart(start_minimized: bool) -> Result<auto_launcher::AutoLaunch, String> {
     let executable = autostart_executable()?;
     let executable = executable
@@ -197,8 +156,6 @@ fn legacy_autostart(start_minimized: bool) -> Result<auto_launcher::AutoLaunch, 
         .set_app_name(AUTOSTART_NAME)
         .set_app_path(executable);
 
-    #[cfg(target_os = "macos")]
-    builder.set_bundle_identifiers(&[AUTOSTART_NAME]);
     #[cfg(target_os = "windows")]
     builder.set_windows_enable_mode(WindowsEnableMode::CurrentUser);
 

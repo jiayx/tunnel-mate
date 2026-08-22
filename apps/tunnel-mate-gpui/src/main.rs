@@ -245,16 +245,6 @@ impl Render for TunnelMateApp {
             .pt(window_content_top_padding())
             .bg(APP_BG)
             .text_color(TEXT);
-        #[cfg(target_os = "macos")]
-        let root = root
-            .on_action(|_: &CloseWindow, window, _| perform_window_close(window))
-            .on_action(|_: &MinimizeWindow, window, _| window.minimize_window())
-            .on_action(|_: &ZoomWindow, window, _| window.zoom_window())
-            .on_action(|_: &ToggleFullScreen, window, _| window.toggle_fullscreen())
-            .on_action(|_: &BringAllToFront, window, cx| {
-                cx.activate(true);
-                window.activate_window();
-            });
         root.child(self.render_sidebar(cx))
             .child(self.render_workspace(cx))
             .when(self.notice.is_some(), |root| {

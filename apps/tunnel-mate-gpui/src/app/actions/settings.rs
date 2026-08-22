@@ -56,8 +56,7 @@ impl TunnelMateApp {
         let mut next_config = self.config.clone();
         let autostart_changed = form.launch_on_startup != self.config.settings.launch_on_startup
             || (form.launch_on_startup
-                && form.start_minimized != self.config.settings.start_minimized)
-            || system::autostart_migration_needed();
+                && form.start_minimized != self.config.settings.start_minimized);
         next_config.settings.launch_on_startup = form.launch_on_startup;
         next_config.settings.start_minimized = form.start_minimized;
         next_config.settings.close_to_tray = form.close_to_tray;
