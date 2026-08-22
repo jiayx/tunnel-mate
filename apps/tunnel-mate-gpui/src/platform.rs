@@ -1,6 +1,6 @@
 use super::*;
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 #[cfg(target_os = "windows")]
 use windows::Win32::Foundation::HWND;
@@ -26,6 +26,33 @@ pub(crate) fn hide_window(window: &Window) {
     set_window_visible(window, false);
 }
 
+#[cfg(target_os = "macos")]
+fn with_native_window(window: &Window, action: impl FnOnce(&objc2_app_kit::NSWindow)) {
+    let Ok(handle) = HasWindowHandle::window_handle(window) else {
+        return;
+    };
+    let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+        return;
+    };
+    let Some(view) = (unsafe {
+        handle
+            .ns_view
+            .as_ptr()
+            .cast::<objc2_app_kit::NSView>()
+            .as_ref()
+    }) else {
+        return;
+    };
+    if let Some(native_window) = view.window() {
+        action(&native_window);
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn hide_window(window: &Window) {
+    with_native_window(window, |window| window.orderOut(None));
+}
+
 // Wayland has no portable request for fully hiding a top-level window. GPUI's
 // minimize implementation uses xdg_toplevel.set_minimized on Wayland and
 // WM_CHANGE_STATE on X11, so this is the reliable cross-desktop fallback.
@@ -39,7 +66,12 @@ pub(crate) fn show_window(window: &Window) {
     set_window_visible(window, true);
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+pub(crate) fn show_window(window: &Window) {
+    with_native_window(window, |window| window.makeKeyAndOrderFront(None));
+}
+
+#[cfg(target_os = "linux")]
 pub(crate) fn show_window(_window: &Window) {}
 
 #[cfg(target_os = "macos")]
@@ -64,6 +96,39 @@ pub(crate) fn set_dock_visible(visible: bool) {
 
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn set_dock_visible(_visible: bool) {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CloseWindowBehavior {
+    #[cfg(target_os = "macos")]
+    CloseWindow,
+    CloseToTray,
+    #[cfg(not(target_os = "macos"))]
+    Quit,
+}
+
+pub(crate) fn close_window_behavior(
+    close_to_tray: bool,
+    tray_available: bool,
+) -> CloseWindowBehavior {
+    #[cfg(target_os = "macos")]
+    {
+        if close_to_tray && tray_available {
+            CloseWindowBehavior::CloseToTray
+        } else {
+            // Closing the last window does not quit a macOS application. Tunnel
+            // shutdown is reserved for the explicit Quit action.
+            CloseWindowBehavior::CloseWindow
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        if close_to_tray && tray_available {
+            CloseWindowBehavior::CloseToTray
+        } else {
+            CloseWindowBehavior::Quit
+        }
+    }
+}
 
 #[cfg(target_os = "macos")]
 pub(crate) fn install_native_behavior(cx: &mut App, language: Language) {
@@ -235,4 +300,43 @@ pub(crate) fn register_global_actions(
         cx.activate(true);
         let _ = window_handle.update(cx, |_, window, _| window.activate_window());
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{close_window_behavior, CloseWindowBehavior};
+
+    #[test]
+    fn close_to_tray_is_used_when_the_tray_is_available() {
+        assert_eq!(
+            close_window_behavior(true, true),
+            CloseWindowBehavior::CloseToTray
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn closing_a_macos_window_never_quits_the_application() {
+        assert_eq!(
+            close_window_behavior(false, true),
+            CloseWindowBehavior::CloseWindow
+        );
+        assert_eq!(
+            close_window_behavior(true, false),
+            CloseWindowBehavior::CloseWindow
+        );
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn closing_without_a_tray_quits_on_other_platforms() {
+        assert_eq!(
+            close_window_behavior(false, true),
+            CloseWindowBehavior::Quit
+        );
+        assert_eq!(
+            close_window_behavior(true, false),
+            CloseWindowBehavior::Quit
+        );
+    }
 }

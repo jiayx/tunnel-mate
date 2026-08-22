@@ -185,6 +185,23 @@ fn keep_running_after_close_description(language: Language) -> &'static str {
     }
 }
 
+fn close_to_tray_title(language: Language) -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        language.pick(
+            "关闭窗口时隐藏 Dock 图标",
+            "Hide the Dock icon when closing the window",
+        )
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        language.pick(
+            "关闭窗口后继续运行",
+            "Keep running after closing the window",
+        )
+    }
+}
+
 fn window_content_top_padding() -> gpui::Pixels {
     if cfg!(target_os = "macos") {
         px(38.0)

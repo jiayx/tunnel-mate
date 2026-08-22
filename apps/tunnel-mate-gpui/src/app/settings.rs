@@ -135,10 +135,7 @@ impl TunnelMateApp {
                                 SettingToggle::Minimized,
                             ))
                             .child(row(
-                                self.language.pick(
-                                    "关闭窗口后继续运行",
-                                    "Keep running after closing the window",
-                                ),
+                                close_to_tray_title(self.language),
                                 keep_running_after_close_description(self.language),
                                 form.close_to_tray,
                                 true,

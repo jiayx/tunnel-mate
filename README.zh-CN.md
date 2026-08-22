@@ -70,11 +70,9 @@ SSH 主机和可选跳板机都可以从 SSH config 选择。选择后会填入�
 
 备份是不会包含密码的可移植 JSON 文件。导出默认定位到 `~/Downloads`；导入时会先校验备份、停止当前连接、替换配置，并自动启动其中标记为随应用重连的隧道。
 
-在 macOS 上，应用提供标准的“应用”和“窗口”菜单，并支持 `Command-,` 打开设置、`Command-W` 关闭窗口、`Command-M` 最小化以及 `Command-Q` 退出。如果开启“关闭到托盘”，关闭窗口只会隐藏界面，隧道继续运行；可通过 Dock 图标或菜单栏图标重新显示。
+在 macOS 上，关闭窗口始终不会停止隧道；明确退出应用时才会停止隧道。如果开启“关闭窗口时隐藏 Dock 图标”，关闭窗口后还会移除 Dock 图标；可根据当前模式通过 Dock 图标或菜单栏图标重新显示。
 
-在 Windows 上，应用使用任务栏通知区域图标：左键恢复窗口，右键打开隧道菜单；窗口使用原生标题栏，并在系统支持时启用 Mica，正式版启动时不会再伴随命令行黑框。设置、关闭窗口和退出分别支持 `Ctrl-,`、`Ctrl-W`、`Ctrl-Q`，输入框支持标准的 `Ctrl-A/C/V/X`。Linux 使用原生标题栏以及 AppIndicator/状态区菜单，菜单中会保留明确的“打开 Tunnel Mate”入口；图标是否显示以及显示位置由桌面环境决定。Linux 同样使用 Ctrl 系列快捷键，并支持 `F11` 全屏。
-
-表单支持 `Tab`/`Shift-Tab` 切换输入焦点、`Enter` 执行弹窗主操作，以及 `Escape` 关闭最上层弹窗。
+在 Windows 上，应用使用任务栏通知区域图标：左键恢复窗口，右键打开隧道菜单；窗口使用原生标题栏，并在系统支持时启用 Mica。Linux 使用原生标题栏以及 AppIndicator/状态区菜单，菜单中会保留明确的“打开 Tunnel Mate”入口；图标是否显示以及显示位置由桌面环境决定。
 
 ## 项目结构
 
@@ -119,7 +117,7 @@ cargo install cargo-packager --version 0.11.8 --locked
 ./scripts/package-local-debug.sh
 ```
 
-脚本明确使用 `app` 格式，不会创建、挂载或自动打开 DMG。默认复用 Cargo 日常开发和测试共用的增量 Debug 缓存，并跳过仅正式 Release 需要的 LTO 和符号裁剪；应用代码保持快速增量编译，GPUI 等第三方依赖会启用适度优化，以便本地滚动和交互测试更接近正式包。默认产物位于 `target/debug/Tunnel Mate.app`。
+脚本使用 Cargo 增量 Debug 配置构建 `.app`，并对 GPUI 等第三方依赖启用适度优化。默认产物位于 `target/debug/Tunnel Mate.app`。
 
 从干净的 `main` 分支准备并发布新版本：
 
@@ -127,7 +125,7 @@ cargo install cargo-packager --version 0.11.8 --locked
 ./scripts/release.sh 0.5.2
 ```
 
-发布脚本只会更新 workspace 版本号和锁文件、创建版本提交，并在推送 `main` 和对应 Tag 前要求确认；本地不会编译、测试或打包。新 Tag 推送后由 GitHub 执行检查和正式构建。传入 `--yes` 可以跳过最后的确认。
+发布脚本更新 workspace 版本号和锁文件、创建版本提交，并在推送 `main` 和对应 Tag 前要求确认。新 Tag 推送后由 GitHub 执行检查和正式构建。传入 `--yes` 可用于非交互式发布。
 
 `.github/workflows/release.yml` 会检查 macOS、Linux 和 Windows，并在手工运行或推送版本标签时生成 DMG、DEB/AppImage 和 Windows WiX/NSIS 安装包。Windows 还会生成包含 `Tunnel Mate.exe` 的便携 ZIP，解压后无需安装即可运行。
 

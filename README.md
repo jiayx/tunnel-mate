@@ -108,23 +108,16 @@ Backups are portable JSON files without passwords. Export defaults to
 `~/Downloads`; importing a backup validates it, stops current sessions, replaces
 the configuration, and starts tunnels marked to reconnect on app launch.
 
-On macOS, the application provides standard Application and Window menus and
-supports `Command-,` for Settings, `Command-W` to close the window, `Command-M`
-to minimize, and `Command-Q` to quit. If **Close to tray** is enabled, closing
-the window hides it while tunnels continue running; use the Dock icon or menu
-bar item to show it again.
-
-Forms support `Tab`/`Shift-Tab` focus navigation, `Enter` for the primary
-dialog action, and `Escape` to close the topmost dialog.
+On macOS, closing the window leaves tunnels running; explicitly quitting stops
+them and exits. If **Hide the Dock icon when closing the window** is enabled,
+closing the window also hides the Dock icon; use the Dock icon or menu bar item
+to show the window again as applicable.
 
 On Windows, the app uses the notification-area icon: left-click restores the
-window and right-click opens tunnel controls. It uses the native title bar,
-Mica where supported, opens without a companion console window, and supports
-`Ctrl-,`, `Ctrl-W`, `Ctrl-Q`, plus the standard
-`Ctrl-A/C/V/X` editing shortcuts. Linux uses a native title bar and an
+window and right-click opens tunnel controls. It uses the native title bar and
+Mica where supported. Linux uses a native title bar and an
 AppIndicator/status-area menu with an explicit **Open Tunnel Mate** action;
-availability and placement of that icon follow the desktop environment. Linux
-uses the same Ctrl shortcuts and `F11` for full screen.
+availability and placement of that icon follow the desktop environment.
 
 ## Architecture
 
@@ -178,13 +171,9 @@ Build only the local macOS application bundle with:
 ./scripts/package-local-debug.sh
 ```
 
-The script explicitly uses the `app` format, so it does not create, mount, or
-open a DMG. By default it reuses Cargo's incremental debug build, including the
-cache shared with normal development and tests, and skips release-only LTO and
-symbol stripping. Workspace code stays quick to rebuild while third-party
-dependencies such as GPUI receive moderate optimization, making local scrolling
-and interaction checks more representative of release builds. The default output
-is `target/debug/Tunnel Mate.app`.
+The script builds an `app` bundle with Cargo's incremental debug profile and
+moderate optimization for third-party dependencies such as GPUI. The default
+output is `target/debug/Tunnel Mate.app`.
 
 Prepare and publish a new tagged version from a clean `main` branch with:
 
@@ -193,9 +182,9 @@ Prepare and publish a new tagged version from a clean `main` branch with:
 ```
 
 The release script updates the workspace version and lockfile, creates the
-release commit, and asks before pushing `main` and the matching tag. It does not
-compile, test, or package the app locally; checks and release builds run after
-the tag is pushed. Pass `--yes` to skip the final confirmation.
+release commit, and asks before pushing `main` and the matching tag. GitHub runs
+the checks and release builds after the tag is pushed. Pass `--yes` for
+non-interactive publishing.
 
 The `.github/workflows/release.yml` workflow checks macOS, Linux, and Windows
 and produces DMG, DEB/AppImage, and Windows WiX/NSIS installers. Windows also
