@@ -213,16 +213,16 @@ impl TunnelMateApp {
     }
 
     pub(crate) fn request_close(&mut self, window: &Window, _cx: &mut Context<Self>) {
-        match close_window_behavior(self.config.settings.close_to_tray, self._tray.is_some()) {
-            #[cfg(target_os = "macos")]
-            CloseWindowBehavior::CloseWindow => hide_window(window),
-            CloseWindowBehavior::CloseToTray => {
-                hide_window(window);
-                set_dock_visible(false);
-            }
-            #[cfg(not(target_os = "macos"))]
-            CloseWindowBehavior::Quit => self.request_quit(),
+        if self.config.settings.close_to_tray && self._tray.is_some() {
+            hide_window(window);
+            set_dock_visible(false);
+            return;
         }
+
+        #[cfg(target_os = "macos")]
+        hide_window(window);
+        #[cfg(not(target_os = "macos"))]
+        self.request_quit();
     }
 
     pub(crate) fn dismiss(&mut self, cx: &mut Context<Self>) {

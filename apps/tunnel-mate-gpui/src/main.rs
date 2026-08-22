@@ -237,15 +237,25 @@ impl Render for TunnelMateApp {
             .form
             .as_ref()
             .is_some_and(|form| form.ssh_picker_target.is_some());
-        div()
+        let root = div()
             .relative()
             .key_context("TunnelMate")
             .flex()
             .size_full()
             .pt(window_content_top_padding())
             .bg(APP_BG)
-            .text_color(TEXT)
-            .child(self.render_sidebar(cx))
+            .text_color(TEXT);
+        #[cfg(target_os = "macos")]
+        let root = root
+            .on_action(|_: &CloseWindow, window, _| perform_window_close(window))
+            .on_action(|_: &MinimizeWindow, window, _| window.minimize_window())
+            .on_action(|_: &ZoomWindow, window, _| window.zoom_window())
+            .on_action(|_: &ToggleFullScreen, window, _| window.toggle_fullscreen())
+            .on_action(|_: &BringAllToFront, window, cx| {
+                cx.activate(true);
+                window.activate_window();
+            });
+        root.child(self.render_sidebar(cx))
             .child(self.render_workspace(cx))
             .when(self.notice.is_some(), |root| {
                 root.child(self.render_notice(cx))
@@ -319,6 +329,7 @@ fn parse_host_key_prompt(
 
 mod platform;
 use platform::*;
+
 fn main() {
     #[cfg(target_os = "macos")]
     let _instance_guard = match single_instance::SingleInstanceGuard::acquire() {
@@ -332,9 +343,6 @@ fn main() {
 
     let minimized_arg = std::env::args().any(|arg| arg == "--minimized");
     let application = gpui_platform::application();
-    if minimized_arg {
-        set_dock_visible(false);
-    }
     application.on_reopen(|cx| {
         set_dock_visible(true);
         cx.activate(true);
@@ -346,6 +354,14 @@ fn main() {
         }
     });
     application.run(move |cx: &mut App| {
+        let start_minimized = minimized_arg
+            || (launched_as_login_item()
+                && ConfigStore::new()
+                    .load_config()
+                    .is_ok_and(|config| config.settings.start_minimized));
+        if start_minimized {
+            set_dock_visible(false);
+        }
         text_input::init(cx);
         cx.set_window_appearance(Some(WindowAppearance::Dark));
         let window_size = size(px(920.0), px(620.0));
@@ -375,7 +391,7 @@ fn main() {
         // On macOS tray initialization replaces NSApp's main menu, so native behavior is
         // installed afterwards. Other platforms only register their conventional shortcuts.
         install_native_behavior(cx, Language::system());
-        if minimized_arg {
+        if start_minimized {
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             let _ = window_handle.update(cx, |_, window, _| hide_window(window));
             #[cfg(not(any(target_os = "windows", target_os = "linux")))]

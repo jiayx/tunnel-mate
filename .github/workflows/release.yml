@@ -167,14 +167,21 @@ jobs:
           from pathlib import Path
 
           path = Path("apps/tunnel-mate-gpui/Cargo.toml")
-          with path.open("a") as file:
-              file.write("\n[package.metadata.packager.macos]\n")
-              file.write(f"signing-identity = {json.dumps(os.environ['APPLE_SIGNING_IDENTITY'])}\n")
+          manifest = path.read_text()
+          default_identity = 'signing-identity = "-"'
+          if default_identity not in manifest:
+              raise SystemExit("default macOS signing identity is missing")
+          manifest = manifest.replace(
+              default_identity,
+              f"signing-identity = {json.dumps(os.environ['APPLE_SIGNING_IDENTITY'])}",
+              1,
+          )
+          path.write_text(manifest)
           PY
             echo "configured=true" >> "$GITHUB_OUTPUT"
           else
             echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "Apple signing secrets are absent; producing an unsigned macOS package."
+            echo "Apple signing secrets are absent; producing an ad-hoc-signed macOS package."
           fi
       - id: windows-signing
         name: Configure Windows signing when credentials are available
@@ -297,9 +304,7 @@ jobs:
           plist="$mount_dir/Tunnel Mate.app/Contents/Info.plist"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")" = "${{ needs.version.outputs.value }}"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")" = "com.jiayx.tunnel-mate"
-          if [[ '${{ steps.macos-signing.outputs.configured }}' == 'true' ]]; then
-            codesign --verify --deep --strict --verbose=2 "$mount_dir/Tunnel Mate.app"
-          fi
+          codesign --verify --deep --strict --verbose=2 "$mount_dir/Tunnel Mate.app"
       - name: Verify Linux packages
         if: runner.os == 'Linux'
         shell: bash

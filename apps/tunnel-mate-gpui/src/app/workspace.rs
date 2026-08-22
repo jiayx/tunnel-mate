@@ -1,7 +1,11 @@
 use super::*;
 
 fn render_activity_row(event: LogEvent) -> gpui::Div {
-    let timestamp = event.timestamp.format("%m-%d %H:%M").to_string();
+    let timestamp = event
+        .timestamp
+        .with_timezone(&chrono::Local)
+        .format("%m-%d %H:%M:%S")
+        .to_string();
     let tunnel_name = event.tunnel_name.unwrap_or_else(|| "Tunnel Mate".into());
     div()
         .flex()

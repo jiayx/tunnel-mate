@@ -54,19 +54,25 @@ impl TunnelMateApp {
         };
         let ssh_path = form.ssh_config_path.read(cx).value();
         let mut next_config = self.config.clone();
+        let autostart_changed = form.launch_on_startup != self.config.settings.launch_on_startup
+            || (form.launch_on_startup
+                && form.start_minimized != self.config.settings.start_minimized)
+            || system::autostart_migration_needed();
         next_config.settings.launch_on_startup = form.launch_on_startup;
         next_config.settings.start_minimized = form.start_minimized;
         next_config.settings.close_to_tray = form.close_to_tray;
         next_config.settings.keep_alive_interval = keep_alive;
         next_config.settings.connect_timeout = connect_timeout;
         next_config.settings.ssh_config_path = (!ssh_path.trim().is_empty()).then_some(ssh_path);
-        if let Err(error) = system::sync_autostart(
-            next_config.settings.launch_on_startup,
-            next_config.settings.start_minimized,
-        ) {
-            self.show_persistent_notice(error);
-            cx.notify();
-            return;
+        if autostart_changed {
+            if let Err(error) = system::sync_autostart(
+                next_config.settings.launch_on_startup,
+                next_config.settings.start_minimized,
+            ) {
+                self.show_persistent_notice(error);
+                cx.notify();
+                return;
+            }
         }
         match ConfigStore::new().save_config(&next_config) {
             Ok(()) => {

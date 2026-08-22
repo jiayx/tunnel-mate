@@ -7,7 +7,7 @@ use russh::client::{self, Config, Handle, Msg};
 use russh::keys::agent::client::AgentClient;
 use russh::keys::agent::client::AgentStream;
 use russh::keys::key::PrivateKeyWithHashAlg;
-use russh::keys::{load_secret_key, ssh_key};
+use russh::keys::{load_secret_key, ssh_key, PublicKeyOrCertificate};
 use russh::{Channel, Disconnect};
 use std::fs;
 use std::path::PathBuf;
@@ -64,8 +64,9 @@ impl client::Handler for TunnelClient {
 
     async fn check_server_key(
         &mut self,
-        server_public_key: &ssh_key::PublicKey,
+        server_key: &PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
+        let server_public_key = server_key.public_key();
         let actual_fingerprint = server_public_key
             .fingerprint(ssh_key::HashAlg::Sha256)
             .to_string();
@@ -80,10 +81,10 @@ impl client::Handler for TunnelClient {
         match self.known_hosts_policy {
             KnownHostsPolicy::TrustOnce => Ok(true),
             KnownHostsPolicy::TrustAndRemember => {
-                match check_known_host_key(&self.host, self.port, server_public_key) {
+                match check_known_host_key(&self.host, self.port, &server_public_key) {
                     HostKeyStatus::Trusted => Ok(true),
                     HostKeyStatus::Unknown => {
-                        match append_known_host(&self.host, self.port, server_public_key) {
+                        match append_known_host(&self.host, self.port, &server_public_key) {
                             Ok(()) => Ok(true),
                             Err(message) => {
                                 self.set_host_key_error(message);
@@ -96,7 +97,7 @@ impl client::Handler for TunnelClient {
                             "HOST_KEY_CHANGED",
                             &self.host,
                             self.port,
-                            server_public_key,
+                            &server_public_key,
                         ));
                         Ok(false)
                     }
@@ -105,21 +106,21 @@ impl client::Handler for TunnelClient {
                             "HOST_KEY_REVOKED",
                             &self.host,
                             self.port,
-                            server_public_key,
+                            &server_public_key,
                         ));
                         Ok(false)
                     }
                 }
             }
             KnownHostsPolicy::RequireKnown => {
-                match check_known_host_key(&self.host, self.port, server_public_key) {
+                match check_known_host_key(&self.host, self.port, &server_public_key) {
                     HostKeyStatus::Trusted => Ok(true),
                     HostKeyStatus::Unknown => {
                         self.set_host_key_error(host_key_error(
                             "HOST_KEY_NOT_TRUSTED",
                             &self.host,
                             self.port,
-                            server_public_key,
+                            &server_public_key,
                         ));
                         Ok(false)
                     }
@@ -128,7 +129,7 @@ impl client::Handler for TunnelClient {
                             "HOST_KEY_CHANGED",
                             &self.host,
                             self.port,
-                            server_public_key,
+                            &server_public_key,
                         ));
                         Ok(false)
                     }
@@ -137,7 +138,7 @@ impl client::Handler for TunnelClient {
                             "HOST_KEY_REVOKED",
                             &self.host,
                             self.port,
-                            server_public_key,
+                            &server_public_key,
                         ));
                         Ok(false)
                     }

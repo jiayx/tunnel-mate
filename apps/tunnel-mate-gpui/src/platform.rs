@@ -53,6 +53,11 @@ pub(crate) fn hide_window(window: &Window) {
     with_native_window(window, |window| window.orderOut(None));
 }
 
+#[cfg(target_os = "macos")]
+pub(crate) fn perform_window_close(window: &Window) {
+    with_native_window(window, |window| window.performClose(None));
+}
+
 // Wayland has no portable request for fully hiding a top-level window. GPUI's
 // minimize implementation uses xdg_toplevel.set_minimized on Wayland and
 // WM_CHANGE_STATE on X11, so this is the reliable cross-desktop fallback.
@@ -94,41 +99,28 @@ pub(crate) fn set_dock_visible(visible: bool) {
     }
 }
 
+#[cfg(target_os = "macos")]
+pub(crate) fn launched_as_login_item() -> bool {
+    use objc2_core_services::{kAEOpenApplication, keyAELaunchedAsLogInItem, keyAEPropData};
+    use objc2_foundation::NSAppleEventManager;
+
+    let manager = NSAppleEventManager::sharedAppleEventManager();
+    let Some(event) = manager.currentAppleEvent() else {
+        return false;
+    };
+    event.eventID() == kAEOpenApplication
+        && event
+            .paramDescriptorForKeyword(keyAEPropData)
+            .is_some_and(|descriptor| descriptor.enumCodeValue() == keyAELaunchedAsLogInItem)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn launched_as_login_item() -> bool {
+    false
+}
+
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn set_dock_visible(_visible: bool) {}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CloseWindowBehavior {
-    #[cfg(target_os = "macos")]
-    CloseWindow,
-    CloseToTray,
-    #[cfg(not(target_os = "macos"))]
-    Quit,
-}
-
-pub(crate) fn close_window_behavior(
-    close_to_tray: bool,
-    tray_available: bool,
-) -> CloseWindowBehavior {
-    #[cfg(target_os = "macos")]
-    {
-        if close_to_tray && tray_available {
-            CloseWindowBehavior::CloseToTray
-        } else {
-            // Closing the last window does not quit a macOS application. Tunnel
-            // shutdown is reserved for the explicit Quit action.
-            CloseWindowBehavior::CloseWindow
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        if close_to_tray && tray_available {
-            CloseWindowBehavior::CloseToTray
-        } else {
-            CloseWindowBehavior::Quit
-        }
-    }
-}
 
 #[cfg(target_os = "macos")]
 pub(crate) fn install_native_behavior(cx: &mut App, language: Language) {
@@ -260,6 +252,9 @@ pub(crate) fn register_global_actions(
     window_handle: WindowHandle<TunnelMateApp>,
     app: Entity<TunnelMateApp>,
 ) {
+    #[cfg(target_os = "macos")]
+    let _ = window_handle;
+
     let weak = app.downgrade();
     cx.on_action(move |_: &ShowAbout, cx| {
         let _ = weak.update(cx, |app, cx| app.show_about(cx));
@@ -270,6 +265,7 @@ pub(crate) fn register_global_actions(
         let _ = weak.update(cx, |app, cx| app.open_settings(cx));
     });
 
+    #[cfg(not(target_os = "macos"))]
     cx.on_action(move |_: &CloseWindow, cx| {
         let _ = window_handle.update(cx, |app, window, cx| app.request_close(window, cx));
     });
@@ -281,62 +277,26 @@ pub(crate) fn register_global_actions(
 
     cx.on_action(|_: &HideApplication, cx| cx.hide());
 
-    let handle = window_handle;
-    cx.on_action(move |_: &MinimizeWindow, cx| {
-        let _ = handle.update(cx, |_, window, _| window.minimize_window());
-    });
-
-    let handle = window_handle;
-    cx.on_action(move |_: &ZoomWindow, cx| {
-        let _ = handle.update(cx, |_, window, _| window.zoom_window());
-    });
-
-    let handle = window_handle;
-    cx.on_action(move |_: &ToggleFullScreen, cx| {
-        let _ = handle.update(cx, |_, window, _| window.toggle_fullscreen());
-    });
-
-    cx.on_action(move |_: &BringAllToFront, cx| {
-        cx.activate(true);
-        let _ = window_handle.update(cx, |_, window, _| window.activate_window());
-    });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{close_window_behavior, CloseWindowBehavior};
-
-    #[test]
-    fn close_to_tray_is_used_when_the_tray_is_available() {
-        assert_eq!(
-            close_window_behavior(true, true),
-            CloseWindowBehavior::CloseToTray
-        );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn closing_a_macos_window_never_quits_the_application() {
-        assert_eq!(
-            close_window_behavior(false, true),
-            CloseWindowBehavior::CloseWindow
-        );
-        assert_eq!(
-            close_window_behavior(true, false),
-            CloseWindowBehavior::CloseWindow
-        );
-    }
-
     #[cfg(not(target_os = "macos"))]
-    #[test]
-    fn closing_without_a_tray_quits_on_other_platforms() {
-        assert_eq!(
-            close_window_behavior(false, true),
-            CloseWindowBehavior::Quit
-        );
-        assert_eq!(
-            close_window_behavior(true, false),
-            CloseWindowBehavior::Quit
-        );
+    {
+        let handle = window_handle;
+        cx.on_action(move |_: &MinimizeWindow, cx| {
+            let _ = handle.update(cx, |_, window, _| window.minimize_window());
+        });
+
+        let handle = window_handle;
+        cx.on_action(move |_: &ZoomWindow, cx| {
+            let _ = handle.update(cx, |_, window, _| window.zoom_window());
+        });
+
+        let handle = window_handle;
+        cx.on_action(move |_: &ToggleFullScreen, cx| {
+            let _ = handle.update(cx, |_, window, _| window.toggle_fullscreen());
+        });
+
+        cx.on_action(move |_: &BringAllToFront, cx| {
+            cx.activate(true);
+            let _ = window_handle.update(cx, |_, window, _| window.activate_window());
+        });
     }
 }
