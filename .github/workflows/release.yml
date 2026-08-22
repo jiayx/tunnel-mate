@@ -205,7 +205,7 @@ jobs:
             "configured=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
             Write-Host "Windows signing secrets are absent; producing unsigned installers."
           }
-      - name: Package native client (macOS, with DMG retry)
+      - name: Package native client (macOS, with optional signing and DMG retry)
         if: runner.os == 'macOS'
         shell: bash
         env:
@@ -215,6 +215,11 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          if [[ "${{ steps.macos-signing.outputs.configured }}" != "true" ]]; then
+            unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD
+            unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+          fi
+
           for attempt in 1 2 3; do
             if cargo packager --manifest-path apps/tunnel-mate-gpui/Cargo.toml --release --target "${{ matrix.target }}" --formats "${{ matrix.formats }}" --out-dir "${{ github.workspace }}/dist" --binaries-dir "${{ github.workspace }}/target/${{ matrix.target }}/release"; then
               exit 0
