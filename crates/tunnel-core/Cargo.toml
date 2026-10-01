@@ -7,7 +7,7 @@ description = "UI-independent configuration and SSH foundation for Tunnel Mate"
 
 [dependencies]
 chrono = { version = "0.4.45", features = ["serde"] }
-dirs = "6.0.0"
+dirs = "7.0.0"
 keyring = "4.1.6"
 regex = "1.13.1"
 ring = "0.17.14"
