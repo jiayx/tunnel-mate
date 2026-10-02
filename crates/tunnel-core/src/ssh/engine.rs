@@ -14,10 +14,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::time::Duration;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, RwLock};
 
 pub type SshHandle = Handle<TunnelClient>;
-pub type SharedSshHandle = Arc<Mutex<SshHandle>>;
+pub type SharedSshHandle = Arc<RwLock<SshHandle>>;
 pub type ForwardedChannel = Channel<Msg>;
 
 #[derive(Debug)]
@@ -31,7 +31,7 @@ pub struct ForwardedTcp {
 
 #[derive(Clone)]
 pub struct TunnelClient {
-    forwarded_tx: mpsc::UnboundedSender<ForwardedTcp>,
+    forwarded_tx: mpsc::Sender<ForwardedTcp>,
     host: String,
     port: u16,
     known_hosts_policy: KnownHostsPolicy,
@@ -41,7 +41,7 @@ pub struct TunnelClient {
 
 impl TunnelClient {
     fn new(
-        forwarded_tx: mpsc::UnboundedSender<ForwardedTcp>,
+        forwarded_tx: mpsc::Sender<ForwardedTcp>,
         host: String,
         port: u16,
         known_hosts_policy: KnownHostsPolicy,
@@ -157,12 +157,13 @@ impl client::Handler for TunnelClient {
         reply: client::ChannelOpenHandle,
         _session: &mut client::Session,
     ) -> Result<(), Self::Error> {
-        if self.forwarded_tx.is_closed() {
+        // Reject excess incoming channels instead of buffering them without limit.
+        let Ok(permit) = self.forwarded_tx.try_reserve() else {
             return Ok(());
-        }
+        };
 
         reply.accept().await;
-        let _ = self.forwarded_tx.send(ForwardedTcp {
+        permit.send(ForwardedTcp {
             channel,
             connected_address: connected_address.to_string(),
             connected_port,
@@ -183,7 +184,7 @@ impl TunnelClient {
 
 pub struct SshSession {
     handle: SharedSshHandle,
-    forwarded_rx: Option<mpsc::UnboundedReceiver<ForwardedTcp>>,
+    forwarded_rx: Option<mpsc::Receiver<ForwardedTcp>>,
     _bastion: Option<Box<SshSession>>,
 }
 
@@ -252,7 +253,7 @@ impl SshSession {
         let keep_alive = settings.keep_alive_interval;
         let config = Arc::new(client_config(keep_alive));
 
-        let (forwarded_tx, forwarded_rx) = mpsc::unbounded_channel();
+        let (forwarded_tx, forwarded_rx) = mpsc::channel(256);
         let host_key_error = Arc::new(StdMutex::new(None));
         let handler = TunnelClient::new(
             forwarded_tx,
@@ -325,7 +326,7 @@ impl SshSession {
         .map_err(|_| format!("SSH authentication for {}@{} timed out", user, host))??;
 
         Ok(Self {
-            handle: Arc::new(Mutex::new(handle)),
+            handle: Arc::new(RwLock::new(handle)),
             forwarded_rx: Some(forwarded_rx),
             _bastion: bastion,
         })
@@ -336,11 +337,21 @@ impl SshSession {
         port: u16,
         expected_fingerprint: &str,
     ) -> Result<(), String> {
+        Self::trust_host_key_via(host, port, expected_fingerprint, None, None).await
+    }
+
+    pub async fn trust_host_key_via(
+        host: &str,
+        port: u16,
+        expected_fingerprint: &str,
+        jump_host_config: Option<&Tunnel>,
+        passphrase: Option<&str>,
+    ) -> Result<(), String> {
         let config = Arc::new(Config {
             nodelay: true,
             ..Default::default()
         });
-        let (forwarded_tx, _) = mpsc::unbounded_channel();
+        let (forwarded_tx, _) = mpsc::channel(1);
         let host_key_error = Arc::new(StdMutex::new(None));
         let handler = TunnelClient::new(
             forwarded_tx,
@@ -355,29 +366,77 @@ impl SshSession {
             .map(|config| config.settings.connect_timeout as u64)
             .unwrap_or(10)
             .max(1);
-        let handle = tokio::time::timeout(
-            Duration::from_secs(timeout_secs),
-            client::connect(config, (host, port), handler),
-        )
-        .await
-        .map_err(|_| format!("Timed out while reading host key from {}:{}", host, port))?
-        .map_err(|e| {
-            host_key_error
-                .lock()
-                .ok()
-                .and_then(|error| error.clone())
-                .unwrap_or_else(|| format!("Failed to trust host key: {e}"))
-        })?;
-        let _ = handle
-            .disconnect(Disconnect::ByApplication, "Host key trusted", "en")
-            .await;
-        Ok(())
+        // The jump host must already be trusted. Only the prompted target key
+        // may be added, and its fingerprint is checked again by the handler.
+        let mut bastion = if let Some(jump) = jump_host_config {
+            Some(
+                Self::connect(ConnectOptions {
+                    host: &jump.ssh_host,
+                    port: jump.ssh_port,
+                    user: &jump.ssh_user,
+                    identity_file: jump.ssh_identity_file.as_deref(),
+                    password: jump.ssh_password.as_deref(),
+                    passphrase,
+                    known_hosts_policy: KnownHostsPolicy::RequireKnown,
+                    jump_host_config: None,
+                })
+                .await?,
+            )
+        } else {
+            None
+        };
+        let connection = async {
+            if let Some(jump) = &bastion {
+                let channel = jump
+                    .open_direct_tcpip_with_timeout(host.to_string(), port as u32, timeout_secs)
+                    .await?;
+                client::connect_stream(config, channel.into_stream(), handler)
+                    .await
+                    .map_err(|e| e.to_string())
+            } else {
+                client::connect(config, (host, port), handler)
+                    .await
+                    .map_err(|e| e.to_string())
+            }
+        };
+        let result = match tokio::time::timeout(Duration::from_secs(timeout_secs), connection).await
+        {
+            Ok(connection) => connection.map_err(|e| {
+                host_key_error
+                    .lock()
+                    .ok()
+                    .and_then(|error| error.clone())
+                    .unwrap_or_else(|| format!("Failed to trust host key: {e}"))
+            }),
+            Err(_) => Err(format!(
+                "Timed out while reading host key from {host}:{port}"
+            )),
+        };
+        if let Ok(handle) = &result {
+            let _ = handle
+                .disconnect(Disconnect::ByApplication, "Host key trusted", "en")
+                .await;
+        }
+        if let Some(jump) = &mut bastion {
+            jump.disconnect().await;
+        }
+        result.map(|_| ())
     }
 
     pub async fn replace_host_key(
         host: &str,
         port: u16,
         expected_fingerprint: &str,
+    ) -> Result<(), String> {
+        Self::replace_host_key_via(host, port, expected_fingerprint, None, None).await
+    }
+
+    pub async fn replace_host_key_via(
+        host: &str,
+        port: u16,
+        expected_fingerprint: &str,
+        jump_host_config: Option<&Tunnel>,
+        passphrase: Option<&str>,
     ) -> Result<(), String> {
         let path = known_hosts_path().ok_or_else(|| "No home directory found".to_string())?;
         let original =
@@ -388,7 +447,15 @@ impl SshSession {
         }
         fs::write(&path, &filtered).map_err(|e| format!("Failed to update known_hosts: {e}"))?;
 
-        if let Err(error) = Self::trust_host_key(host, port, expected_fingerprint).await {
+        if let Err(error) = Self::trust_host_key_via(
+            host,
+            port,
+            expected_fingerprint,
+            jump_host_config,
+            passphrase,
+        )
+        .await
+        {
             if let Err(restore_error) = fs::write(&path, original) {
                 return Err(format!(
                     "{error}; restoring the previous known_hosts file also failed: {restore_error}"
@@ -403,19 +470,19 @@ impl SshSession {
         self.handle.clone()
     }
 
-    pub fn take_forwarded_receiver(&mut self) -> Option<mpsc::UnboundedReceiver<ForwardedTcp>> {
+    pub fn take_forwarded_receiver(&mut self) -> Option<mpsc::Receiver<ForwardedTcp>> {
         self.forwarded_rx.take()
     }
 
     pub async fn is_alive(&self) -> bool {
-        !self.handle.lock().await.is_closed()
+        !self.handle.read().await.is_closed()
     }
 
     pub async fn closed_reason(handle: &SharedSshHandle) -> Option<String> {
-        let mut handle = handle.lock().await;
-        if !handle.is_closed() {
+        if !handle.read().await.is_closed() {
             return None;
         }
+        let mut handle = handle.write().await;
 
         Some(
             match tokio::time::timeout(Duration::from_secs(1), &mut *handle).await {
@@ -428,7 +495,7 @@ impl SshSession {
     pub async fn disconnect(&mut self) {
         let _ = self
             .handle
-            .lock()
+            .read()
             .await
             .disconnect(Disconnect::ByApplication, "Tunnel stopped by user", "en")
             .await;
@@ -446,7 +513,7 @@ impl SshSession {
         tokio::time::timeout(
             Duration::from_secs(timeout_secs.max(1)),
             self.handle
-                .lock()
+                .read()
                 .await
                 .channel_open_direct_tcpip(host.clone(), port, "127.0.0.1", 0),
         )

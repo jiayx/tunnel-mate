@@ -211,6 +211,11 @@ pub(super) fn append_known_host(
 }
 
 pub(super) fn known_hosts_path() -> Option<PathBuf> {
+    // Isolated profiles and integration tests can keep trust separate from the
+    // user's OpenSSH file without changing the process home directory.
+    if let Some(path) = std::env::var_os("TUNNEL_MATE_KNOWN_HOSTS_PATH") {
+        return Some(PathBuf::from(path));
+    }
     dirs::home_dir().map(|home| home.join(".ssh").join("known_hosts"))
 }
 

@@ -393,6 +393,7 @@ pub(crate) struct TunnelMateApp {
     pub(crate) group_delete_confirmation: Option<String>,
     pub(crate) pending_delete: Option<String>,
     pub(crate) auth_prompt: Option<AuthPrompt>,
+    pub(crate) pending_passphrases: HashMap<String, String>,
     pub(crate) about_open: bool,
     pub(crate) manager: Arc<Mutex<TunnelManager>>,
     pub(crate) runtime: Arc<Runtime>,

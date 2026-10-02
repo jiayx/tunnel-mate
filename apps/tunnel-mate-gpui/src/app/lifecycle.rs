@@ -125,6 +125,7 @@ impl TunnelMateApp {
             group_delete_confirmation: None,
             pending_delete: None,
             auth_prompt: None,
+            pending_passphrases: HashMap::new(),
             about_open: false,
             manager,
             runtime,
@@ -151,6 +152,7 @@ impl TunnelMateApp {
                 let mut intervention = false;
                 if let Some(message) = payload.message.as_deref() {
                     if message == "PASSPHRASE_REQUIRED" {
+                        self.pending_passphrases.remove(&payload.tunnel_id);
                         intervention = true;
                         self.auth_prompt = Some(AuthPrompt::Passphrase {
                             tunnel_id: payload.tunnel_id.clone(),
@@ -179,6 +181,11 @@ impl TunnelMateApp {
                 }
                 let tunnel_id = payload.tunnel_id;
                 let status = payload.status;
+                if matches!(status, TunnelStatus::Running | TunnelStatus::Stopped)
+                    || (status == TunnelStatus::Failed && !intervention)
+                {
+                    self.pending_passphrases.remove(&tunnel_id);
+                }
                 self.statuses.insert(tunnel_id.clone(), status.clone());
                 let restart_after_stop =
                     status == TunnelStatus::Stopped && self.pending_starts.remove(&tunnel_id);
@@ -349,7 +356,8 @@ impl TunnelMateApp {
             AppMessage::QuitReady => cx.quit(),
             AppMessage::HostTrusted(tunnel_id) => {
                 self.auth_prompt = None;
-                self.start_tunnel_with_passphrase(tunnel_id, None, cx);
+                let passphrase = self.pending_passphrases.get(&tunnel_id).cloned();
+                self.start_tunnel_with_passphrase(tunnel_id, passphrase, cx);
             }
         }
     }

@@ -94,6 +94,46 @@ pub struct Tunnel {
 }
 
 impl Tunnel {
+    pub fn resolve_jump_host(&self, tunnels: &[Tunnel]) -> Result<Option<Tunnel>, String> {
+        if !self.jump_host_enabled {
+            return Ok(None);
+        }
+        if let Some(id) = self.jump_host_id.as_deref() {
+            return tunnels
+                .iter()
+                .find(|tunnel| tunnel.id == id)
+                .cloned()
+                .map(Some)
+                .ok_or_else(|| {
+                    format!("Tunnel '{}' jump host reference was not found", self.name)
+                });
+        }
+        Ok(Some(Tunnel {
+            id: format!("{}_manual_jump", self.id),
+            name: self.jump_host.clone().unwrap_or_default(),
+            ssh_host: self.jump_host.clone().unwrap_or_default(),
+            ssh_port: self
+                .jump_port
+                .ok_or_else(|| format!("Tunnel '{}' jump port is required", self.name))?,
+            ssh_user: self
+                .jump_user
+                .clone()
+                .ok_or_else(|| format!("Tunnel '{}' jump user is required", self.name))?,
+            ssh_identity_file: self.jump_identity_file.clone(),
+            ssh_password: self.jump_password.clone(),
+            jump_host_enabled: false,
+            jump_host_id: None,
+            jump_host: None,
+            jump_port: None,
+            jump_user: None,
+            jump_identity_file: None,
+            jump_password: None,
+            start_with_app: false,
+            auto_reconnect: false,
+            ..self.clone()
+        }))
+    }
+
     /// Returns whether applying `updated` requires replacing the live SSH/forwarding session.
     ///
     /// Keep the destructuring exhaustive: adding a field to `Tunnel` must also classify it here.

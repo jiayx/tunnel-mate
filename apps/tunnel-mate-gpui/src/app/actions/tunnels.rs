@@ -226,6 +226,10 @@ impl TunnelMateApp {
     }
 
     pub(crate) fn dismiss(&mut self, cx: &mut Context<Self>) {
+        if self.auth_prompt.is_some() {
+            self.close_auth_prompt(cx);
+            return;
+        }
         if self.about_open {
             self.about_open = false;
             cx.notify();

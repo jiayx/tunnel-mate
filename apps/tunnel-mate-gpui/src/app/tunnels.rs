@@ -364,6 +364,10 @@ impl TunnelMateApp {
         passphrase: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        if let Some(passphrase) = &passphrase {
+            self.pending_passphrases
+                .insert(tunnel_id.clone(), passphrase.clone());
+        }
         let Some(tunnel) = self
             .config
             .tunnels
@@ -402,6 +406,12 @@ impl TunnelMateApp {
     }
 
     pub(super) fn close_auth_prompt(&mut self, cx: &mut Context<Self>) {
+        if let Some(
+            AuthPrompt::HostKey { tunnel_id, .. } | AuthPrompt::Passphrase { tunnel_id, .. },
+        ) = &self.auth_prompt
+        {
+            self.pending_passphrases.remove(tunnel_id);
+        }
         self.auth_prompt = None;
         cx.notify();
     }
@@ -439,14 +449,29 @@ impl TunnelMateApp {
         };
         let (tunnel_id, host, port, fingerprint) =
             (tunnel_id.clone(), host.clone(), *port, fingerprint.clone());
+        let jump = match self.prompted_host_jump(&tunnel_id, &host, port) {
+            Ok(jump) => jump,
+            Err(error) => {
+                self.show_persistent_notice(error);
+                cx.notify();
+                return;
+            }
+        };
+        let passphrase = self.pending_passphrases.get(&tunnel_id).cloned();
         let error_prefix = self
             .language
             .pick("信任主机密钥失败", "Failed to trust host key")
             .to_string();
         let sender = self.messages.clone();
         self.runtime.spawn(async move {
-            match tunnel_core::ssh::engine::SshSession::trust_host_key(&host, port, &fingerprint)
-                .await
+            match tunnel_core::ssh::engine::SshSession::trust_host_key_via(
+                &host,
+                port,
+                &fingerprint,
+                jump.as_ref(),
+                passphrase.as_deref(),
+            )
+            .await
             {
                 Ok(()) => {
                     let _ = sender.send(AppMessage::HostTrusted(tunnel_id)).await;
@@ -501,14 +526,29 @@ impl TunnelMateApp {
         };
         let (tunnel_id, host, port, fingerprint) =
             (tunnel_id.clone(), host.clone(), *port, fingerprint.clone());
+        let jump = match self.prompted_host_jump(&tunnel_id, &host, port) {
+            Ok(jump) => jump,
+            Err(error) => {
+                self.show_persistent_notice(error);
+                cx.notify();
+                return;
+            }
+        };
+        let passphrase = self.pending_passphrases.get(&tunnel_id).cloned();
         let error_prefix = self
             .language
             .pick("更新主机密钥失败", "Failed to update host key")
             .to_string();
         let sender = self.messages.clone();
         self.runtime.spawn(async move {
-            match tunnel_core::ssh::engine::SshSession::replace_host_key(&host, port, &fingerprint)
-                .await
+            match tunnel_core::ssh::engine::SshSession::replace_host_key_via(
+                &host,
+                port,
+                &fingerprint,
+                jump.as_ref(),
+                passphrase.as_deref(),
+            )
+            .await
             {
                 Ok(()) => {
                     let _ = sender.send(AppMessage::HostTrusted(tunnel_id)).await;
@@ -534,5 +574,25 @@ impl TunnelMateApp {
         let passphrase = input.read(cx).value();
         self.auth_prompt = None;
         self.start_tunnel_with_passphrase(tunnel_id, Some(passphrase), cx);
+    }
+
+    fn prompted_host_jump(
+        &self,
+        tunnel_id: &str,
+        host: &str,
+        port: u16,
+    ) -> Result<Option<Tunnel>, String> {
+        let tunnel = self
+            .config
+            .tunnels
+            .iter()
+            .find(|tunnel| tunnel.id == tunnel_id)
+            .ok_or_else(|| "Tunnel no longer exists".to_string())?;
+        // The first prompt can be for the jump host itself, which is reached directly.
+        if tunnel.ssh_host == host && tunnel.ssh_port == port {
+            tunnel.resolve_jump_host(&self.config.tunnels)
+        } else {
+            Ok(None)
+        }
     }
 }

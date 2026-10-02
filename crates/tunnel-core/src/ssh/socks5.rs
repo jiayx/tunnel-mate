@@ -1,5 +1,24 @@
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+#[derive(Clone, Copy)]
+#[repr(u8)]
+pub enum Socks5Reply {
+    Succeeded = 0x00,
+    GeneralFailure = 0x01,
+    HostUnreachable = 0x04,
+}
+
+pub async fn send_reply<S: AsyncWrite + Unpin>(
+    stream: &mut S,
+    reply: Socks5Reply,
+) -> Result<(), String> {
+    stream
+        .write_all(&[0x05, reply as u8, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+        .await
+        .map_err(|e| format!("Failed to write SOCKS5 request reply: {e}"))
+}
+
+/// Parse a CONNECT request. The caller must open the destination before replying.
 pub async fn negotiate_socks5<S>(stream: &mut S) -> Result<(String, u16), String>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -90,12 +109,8 @@ where
                 .read_exact(&mut ipv6)
                 .await
                 .map_err(|e| format!("Failed to read SOCKS5 IPv6: {}", e))?;
-            // Return bracketed IPv6 for standard socket parsing
-            format!(
-                "[{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}]",
-                ipv6[0], ipv6[1], ipv6[2], ipv6[3], ipv6[4], ipv6[5], ipv6[6], ipv6[7],
-                ipv6[8], ipv6[9], ipv6[10], ipv6[11], ipv6[12], ipv6[13], ipv6[14], ipv6[15]
-            )
+            // SSH carries the host and port separately, so it needs a bare address.
+            std::net::Ipv6Addr::from(ipv6).to_string()
         }
         _ => {
             stream
@@ -110,13 +125,6 @@ where
         .read_u16()
         .await
         .map_err(|e| format!("Failed to read SOCKS5 port: {}", e))?;
-
-    // Respond with success. The client expects:
-    // VER=0x05, REP=0x00 (success), RSV=0x00, ATYP=0x01 (IPv4), BND.ADDR=4 bytes, BND.PORT=2 bytes
-    stream
-        .write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
-        .await
-        .map_err(|e| format!("Failed to write SOCKS5 request reply: {}", e))?;
 
     Ok((host, port))
 }
