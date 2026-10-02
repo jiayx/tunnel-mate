@@ -81,6 +81,10 @@ impl TunnelMateApp {
         let search = cx.new(|cx| TextInput::new(cx, search_placeholder, ""));
         cx.subscribe(&search, |this, _, _: &text_input::InputChanged, cx| {
             this.tunnel_scroll = UniformListScrollHandle::new();
+            this.selected_tunnel = this
+                .filtered_tunnels(cx)
+                .first()
+                .map(|tunnel| tunnel.id.clone());
             cx.notify();
         })
         .detach();
@@ -98,6 +102,7 @@ impl TunnelMateApp {
             config,
             search,
             filter: TunnelFilter::All,
+            status_filter: TunnelStatusFilter::All,
             selected_tunnel,
             form: None,
             notice: None,
@@ -285,6 +290,7 @@ impl TunnelMateApp {
                     .collect();
                 self.selected_tunnel = self.config.tunnels.first().map(|tunnel| tunnel.id.clone());
                 self.filter = TunnelFilter::All;
+                self.status_filter = TunnelStatusFilter::All;
                 self.settings_form = None;
                 self.pending_import = None;
                 self.refresh_tray();

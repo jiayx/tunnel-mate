@@ -5,15 +5,8 @@ impl TunnelMateApp {
         self.filter = filter;
         self.tunnel_scroll = UniformListScrollHandle::new();
         self.selected_tunnel = self
-            .config
-            .tunnels
-            .iter()
-            .find(|tunnel| match &self.filter {
-                TunnelFilter::All => true,
-                TunnelFilter::Active => self.is_active(&tunnel.id),
-                TunnelFilter::Activity => false,
-                TunnelFilter::Group(group_id) => tunnel.group_id.as_ref() == Some(group_id),
-            })
+            .filtered_tunnels(cx)
+            .first()
             .map(|tunnel| tunnel.id.clone());
         cx.notify();
     }

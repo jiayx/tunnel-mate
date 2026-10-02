@@ -33,6 +33,15 @@ impl Language {
             return message.to_string();
         }
         match message {
+            "Tunnel connection starting..." => "正在建立 SSH 连接…".to_string(),
+            "Tunnel is active" => "SSH 连接已建立，转发已启动".to_string(),
+            "Tunnel stopped by user" => "已手动断开连接".to_string(),
+            _ if message.starts_with("Reconnecting attempt ") => {
+                format!("正在尝试重连（{}）", message["Reconnecting attempt ".len()..].trim_end_matches('.'))
+            }
+            _ if message.starts_with("Connection failed: ") => {
+                self.runtime_message(&message["Connection failed: ".len()..])
+            }
             "Tunnel is already running" | "Tunnel is already running or connecting" => {
                 "隧道已经在运行或连接中".to_string()
             }

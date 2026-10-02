@@ -3,9 +3,38 @@ use super::*;
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum TunnelFilter {
     All,
-    Active,
     Activity,
     Group(String),
+}
+
+impl TunnelFilter {
+    pub(crate) fn includes(&self, tunnel: &Tunnel) -> bool {
+        match self {
+            Self::All => true,
+            Self::Activity => false,
+            Self::Group(id) => tunnel.group_id.as_ref() == Some(id),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TunnelStatusFilter {
+    All,
+    Active,
+    Failed,
+}
+
+impl TunnelStatusFilter {
+    pub(crate) fn matches(self, status: &TunnelStatus) -> bool {
+        match self {
+            Self::All => true,
+            Self::Active => matches!(
+                status,
+                TunnelStatus::Running | TunnelStatus::Connecting | TunnelStatus::Reconnecting
+            ),
+            Self::Failed => *status == TunnelStatus::Failed,
+        }
+    }
 }
 
 pub(crate) enum AppMessage {
@@ -456,6 +485,7 @@ pub(crate) struct TunnelMateApp {
     pub(crate) config: AppConfig,
     pub(crate) search: Entity<TextInput>,
     pub(crate) filter: TunnelFilter,
+    pub(crate) status_filter: TunnelStatusFilter,
     pub(crate) selected_tunnel: Option<String>,
     pub(crate) form: Option<TunnelForm>,
     pub(crate) notice: Option<AppNotice>,

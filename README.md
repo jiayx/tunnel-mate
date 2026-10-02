@@ -79,9 +79,13 @@ chmod +x tunnel-mate-*-linux-x86_64.AppImage
 3. Enter the listening address and, for local or remote forwarding, the target
    address. Select **Save and connect**, or clear **Connect after save** to
    save without connecting.
-4. Use **Connect**, **Disconnect**, **Edit**, and **Diagnose** on each tunnel.
+4. Use **Connect** or **Disconnect** on each row. Select a tunnel to **Edit**
+   or **Diagnose** it from the bottom toolbar.
    Editing a running tunnel's connection settings requires confirmation before
    reconnecting. Updating its name, description, or group keeps it connected.
+
+The **All**, **Active**, and **Failed** filters can be combined with groups and
+search. **Activity** shows connection and configuration events in time order.
 
 New tunnels enable **Connect when app starts** and **Reconnect
 automatically** by default. Enable **Launch at login** in Settings to start the app

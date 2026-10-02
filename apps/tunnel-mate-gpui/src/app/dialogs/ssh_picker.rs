@@ -7,7 +7,14 @@ impl TunnelMateApp {
         div()
             .absolute()
             .right(px(18.0))
-            .bottom(px(18.0))
+            .bottom(px(if self.filter == TunnelFilter::Activity {
+                18.0
+            } else {
+                76.0
+            }))
+            .occlude()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .max_w(px(420.0))
             .px(px(13.0))
             .py(px(11.0))
@@ -34,7 +41,10 @@ impl TunnelMateApp {
                 close_button(theme, "dismiss_notice")
                     .size(px(24.0))
                     .tab_index(0)
-                    .on_click(cx.listener(|this, _, _, cx| this.dismiss_notice(cx))),
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.dismiss_notice(cx);
+                    })),
             )
     }
 
