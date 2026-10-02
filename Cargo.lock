@@ -7586,6 +7586,7 @@ dependencies = [
  "dirs 6.0.0",
  "gpui-platform-gpui-unofficial",
  "gpui-unofficial",
+ "gtk",
  "image",
  "libc",
  "objc2 0.6.4",

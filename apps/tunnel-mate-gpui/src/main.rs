@@ -325,6 +325,12 @@ mod platform;
 use platform::*;
 
 fn main() {
+    #[cfg(target_os = "linux")]
+    if let Err(error) = gtk::init() {
+        eprintln!("Tunnel Mate could not initialize GTK for the system tray: {error}");
+        return;
+    }
+
     #[cfg(target_os = "macos")]
     let _instance_guard = match single_instance::SingleInstanceGuard::acquire() {
         Ok(Some(guard)) => guard,
@@ -348,6 +354,9 @@ fn main() {
         }
     });
     application.run(move |cx: &mut App| {
+        #[cfg(target_os = "linux")]
+        pump_linux_tray_events(cx);
+
         let start_minimized = minimized_arg
             || (launched_as_login_item()
                 && ConfigStore::new()

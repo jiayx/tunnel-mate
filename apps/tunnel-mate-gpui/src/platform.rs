@@ -1,5 +1,26 @@
 use super::*;
 
+#[cfg(target_os = "linux")]
+pub(crate) fn pump_linux_tray_events(cx: &mut App) {
+    // GPUI owns the native event loop. The GTK tray still needs its GLib
+    // sources dispatched on the same thread that created the menu and icon.
+    cx.spawn(async move |cx| {
+        let context = gtk::glib::MainContext::default();
+        loop {
+            // Bound each batch so a busy tray cannot starve GPUI input.
+            for _ in 0..64 {
+                if !context.iteration(false) {
+                    break;
+                }
+            }
+            cx.background_executor()
+                .timer(Duration::from_millis(16))
+                .await;
+        }
+    })
+    .detach();
+}
+
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 #[cfg(target_os = "windows")]
