@@ -200,6 +200,7 @@ impl TunnelMateApp {
                 .await;
         });
         self.diagnostics = Some(DiagnosticState {
+            scroll: gpui::ScrollHandle::new(),
             request_id,
             tunnel_id: id,
             tunnel_name,

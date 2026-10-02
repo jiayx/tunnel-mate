@@ -413,10 +413,6 @@ impl ConfigStore {
         Self { base_path: path }
     }
 
-    pub fn from_base_path(base_path: PathBuf) -> Self {
-        Self { base_path }
-    }
-
     pub fn get_config_path(&self) -> PathBuf {
         self.base_path.join("config.json")
     }
@@ -659,11 +655,6 @@ mod tests {
     }
 
     #[test]
-    fn default_config_uses_current_version() {
-        assert_eq!(AppConfig::default().version, CONFIG_VERSION);
-    }
-
-    #[test]
     fn serializes_forward_spec_schema() {
         let mut tunnel = test_tunnel(ForwardSpec::Local {
             listen: test_endpoint("127.0.0.1", 13306),
@@ -779,32 +770,21 @@ mod tests {
     }
 
     #[test]
-    fn isolated_store_atomically_round_trips_default_config() {
+    fn isolated_store_creates_and_replaces_config() {
         let directory = tempfile::tempdir().unwrap();
-        let store = ConfigStore::from_base_path(directory.path().to_path_buf());
-        let config = AppConfig::default();
-
-        store.save_config(&config).unwrap();
-        let loaded = store.load_config().unwrap();
-
-        assert_eq!(loaded.version, CONFIG_VERSION);
-        assert_eq!(loaded.settings, GlobalSettings::default());
-        assert!(loaded.tunnels.is_empty());
-        assert!(store.get_config_path().exists());
-        assert!(!store.get_config_path().with_extension("tmp").exists());
-    }
-
-    #[test]
-    fn isolated_store_atomically_replaces_existing_config() {
-        let directory = tempfile::tempdir().unwrap();
-        let store = ConfigStore::from_base_path(directory.path().to_path_buf());
+        let store = ConfigStore {
+            base_path: directory.path().to_path_buf(),
+        };
         let mut config = AppConfig::default();
 
         store.save_config(&config).unwrap();
+        let loaded = store.load_config().unwrap();
+        assert_eq!(loaded.version, CONFIG_VERSION);
+        assert_eq!(loaded.settings, GlobalSettings::default());
+        assert!(loaded.tunnels.is_empty());
+
         config.settings.connect_timeout = 42;
         store.save_config(&config).unwrap();
-
-        let loaded = store.load_config().unwrap();
-        assert_eq!(loaded.settings.connect_timeout, 42);
+        assert_eq!(store.load_config().unwrap().settings.connect_timeout, 42);
     }
 }

@@ -24,11 +24,11 @@ pub enum RuntimeEvent {
 
 pub type EventSink = Arc<dyn Fn(RuntimeEvent) + Send + Sync>;
 
-pub struct ActiveTunnel {
-    pub tunnel: Tunnel,
-    pub worker: TunnelWorker,
-    pub log_channel: LogSink,
-    pub session_id: String,
+struct ActiveTunnel {
+    tunnel: Tunnel,
+    worker: TunnelWorker,
+    log_channel: LogSink,
+    session_id: String,
     ssh_session: SshSession,
 }
 
@@ -36,40 +36,17 @@ pub struct TunnelManager {
     active_tunnels: HashMap<String, ActiveTunnel>,
     reconnect_tasks: HashMap<String, tokio::task::JoinHandle<()>>,
     operations: HashMap<String, Uuid>,
-    statuses: HashMap<String, TunnelStatus>,
     events: EventSink,
 }
 
-impl Default for TunnelManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl TunnelManager {
-    pub fn new() -> Self {
-        Self::with_event_sink(Arc::new(|_| {}))
-    }
-
     pub fn with_event_sink(events: EventSink) -> Self {
         Self {
             active_tunnels: HashMap::new(),
             reconnect_tasks: HashMap::new(),
             operations: HashMap::new(),
-            statuses: HashMap::new(),
             events,
         }
-    }
-
-    pub fn get_status(&self, tunnel_id: &str) -> TunnelStatus {
-        self.statuses
-            .get(tunnel_id)
-            .cloned()
-            .unwrap_or(TunnelStatus::Stopped)
-    }
-
-    pub fn set_event_sink(&mut self, events: EventSink) {
-        self.events = events;
     }
 
     pub async fn start_tunnel(
@@ -78,25 +55,32 @@ impl TunnelManager {
         passphrase: Option<String>,
         log_sink: LogSink,
     ) -> Result<(), String> {
-        let operation_id = Self::begin_operation(&manager_state, &tunnel.id).await?;
-        Self::start_tunnel_attempt(manager_state, tunnel, passphrase, log_sink, 0, operation_id)
-            .await
-    }
-
-    pub async fn start_tunnel_silent(
-        manager_state: Arc<Mutex<Self>>,
-        tunnel: Tunnel,
-    ) -> Result<(), String> {
-        let operation_id = Self::begin_operation(&manager_state, &tunnel.id).await?;
-        Self::start_tunnel_attempt(
-            manager_state,
+        let tunnel_id = tunnel.id.clone();
+        let operation_id = Self::begin_operation(&manager_state, &tunnel_id).await?;
+        let result = Self::start_tunnel_attempt(
+            manager_state.clone(),
             tunnel,
-            None,
-            LogSink::Silent,
+            passphrase,
+            log_sink,
             0,
             operation_id,
         )
-        .await
+        .await;
+        if let Err(error) = &result {
+            let mut manager = manager_state.lock().await;
+            if manager.operations.get(&tunnel_id) == Some(&operation_id) {
+                manager.operations.remove(&tunnel_id);
+                let events = manager.events.clone();
+                drop(manager);
+                emit_status(
+                    &events,
+                    &tunnel_id,
+                    TunnelStatus::Failed,
+                    Some(error.clone()),
+                );
+            }
+        }
+        result
     }
 
     async fn begin_operation(
@@ -116,9 +100,6 @@ impl TunnelManager {
         manager
             .operations
             .insert(tunnel_id.to_string(), operation_id);
-        manager
-            .statuses
-            .insert(tunnel_id.to_string(), TunnelStatus::Connecting);
         Ok(operation_id)
     }
 
@@ -153,9 +134,6 @@ impl TunnelManager {
         {
             let mut manager = manager_state.lock().await;
             manager.reconnect_tasks.remove(&tunnel_id);
-            manager
-                .statuses
-                .insert(tunnel_id.clone(), TunnelStatus::Connecting);
         }
 
         // Notify connecting status
@@ -175,50 +153,8 @@ impl TunnelManager {
             "Tunnel connection starting...".to_string(),
         );
 
-        // Resolve Jump Host configuration if enabled
         let jump_config = if tunnel.jump_host_enabled {
-            let config = ConfigStore::new().load_config()?;
-            if let Some(jump_host_id) = tunnel.jump_host_id.as_deref() {
-                let selected = config
-                    .tunnels
-                    .iter()
-                    .find(|candidate| candidate.id == jump_host_id)
-                    .cloned()
-                    .ok_or_else(|| {
-                        format!("Tunnel '{}' jump host reference was not found", tunnel.name)
-                    })?;
-                Some(selected)
-            } else {
-                let jump_host = tunnel.jump_host.clone().unwrap_or_default();
-                Some(Tunnel {
-                    id: format!("{}_manual_jump", tunnel.id),
-                    name: jump_host.clone(),
-                    description: None,
-                    group_id: None,
-                    ssh_host: jump_host,
-                    ssh_port: tunnel
-                        .jump_port
-                        .ok_or_else(|| format!("Tunnel '{}' jump port is required", tunnel.name))?,
-                    ssh_user: tunnel
-                        .jump_user
-                        .clone()
-                        .ok_or_else(|| format!("Tunnel '{}' jump user is required", tunnel.name))?,
-                    ssh_identity_file: tunnel.jump_identity_file.clone(),
-                    ssh_password: tunnel.jump_password.clone(),
-                    jump_host_enabled: false,
-                    jump_host_id: None,
-                    jump_host: None,
-                    jump_port: None,
-                    jump_user: None,
-                    jump_identity_file: None,
-                    jump_password: None,
-                    forward: tunnel.forward.clone(),
-                    start_with_app: false,
-                    auto_reconnect: false,
-                    retry_count: 0,
-                    retry_interval: tunnel.retry_interval,
-                })
-            }
+            tunnel.resolve_jump_host(&ConfigStore::new().load_config()?.tunnels)?
         } else {
             None
         };
@@ -263,28 +199,11 @@ impl TunnelManager {
                         format!("Connection failed: {}", err_msg),
                     );
 
-                    if err_msg == "PASSPHRASE_REQUIRED"
+                    let needs_user_input = err_msg == "PASSPHRASE_REQUIRED"
                         || err_msg.starts_with("HOST_KEY_NOT_TRUSTED|")
                         || err_msg.starts_with("HOST_KEY_CHANGED|")
-                        || err_msg.starts_with("HOST_KEY_REVOKED|")
-                    {
-                        {
-                            let mut manager = m_state.lock().await;
-                            if manager.operations.get(&tunnel_id) != Some(&operation_id) {
-                                return;
-                            }
-                            manager
-                                .statuses
-                                .insert(tunnel_id.clone(), TunnelStatus::Failed);
-                            manager.operations.remove(&tunnel_id);
-                        }
-                        emit_status(
-                            &task_events,
-                            &tunnel_id,
-                            TunnelStatus::Failed,
-                            Some(err_msg),
-                        );
-                    } else if tunnel.auto_reconnect {
+                        || err_msg.starts_with("HOST_KEY_REVOKED|");
+                    if tunnel.auto_reconnect && !needs_user_input {
                         // Spawn reconnect task
                         Self::spawn_reconnect_flow(
                             m_state,
@@ -301,9 +220,6 @@ impl TunnelManager {
                             if manager.operations.get(&tunnel_id) != Some(&operation_id) {
                                 return;
                             }
-                            manager
-                                .statuses
-                                .insert(tunnel_id.clone(), TunnelStatus::Failed);
                             manager.operations.remove(&tunnel_id);
                         }
                         emit_status(
@@ -343,9 +259,6 @@ impl TunnelManager {
                         let is_current = {
                             let mut manager = m_state.lock().await;
                             if manager.operations.get(&tunnel_id) == Some(&operation_id) {
-                                manager
-                                    .statuses
-                                    .insert(tunnel_id.clone(), TunnelStatus::Failed);
                                 manager.operations.remove(&tunnel_id);
                                 true
                             } else {
@@ -383,9 +296,6 @@ impl TunnelManager {
                     active.ssh_session.disconnect().await;
                     return;
                 }
-                manager
-                    .statuses
-                    .insert(tunnel_id.clone(), TunnelStatus::Running);
                 manager.active_tunnels.insert(tunnel_id.clone(), active);
             }
 
@@ -426,9 +336,6 @@ impl TunnelManager {
                 task.abort();
             }
             let active = manager.active_tunnels.remove(tunnel_id);
-            manager
-                .statuses
-                .insert(tunnel_id.to_string(), TunnelStatus::Stopped);
             (manager.events.clone(), active)
         };
 
@@ -458,7 +365,6 @@ impl TunnelManager {
         Ok(())
     }
 
-    #[allow(dead_code)] // Used by the GPUI client through the shared core crate.
     pub async fn stop_all(manager_state: Arc<Mutex<Self>>) {
         let tunnel_ids = {
             let manager = manager_state.lock().await;
@@ -491,7 +397,6 @@ impl TunnelManager {
             tokio::spawn(async move {
                 let mut manager = m_state_fail.lock().await;
                 if manager.operations.get(&t_id) == Some(&operation_id) {
-                    manager.statuses.insert(t_id.clone(), TunnelStatus::Failed);
                     manager.operations.remove(&t_id);
                     drop(manager);
                     emit_status(
@@ -518,11 +423,8 @@ impl TunnelManager {
         let t_id_reconn = tunnel_id.clone();
         let reconnect_events = events.clone();
         tokio::spawn(async move {
-            let mut manager = m_state_reconn.lock().await;
+            let manager = m_state_reconn.lock().await;
             if manager.operations.get(&t_id_reconn) == Some(&operation_id) {
-                manager
-                    .statuses
-                    .insert(t_id_reconn.clone(), TunnelStatus::Reconnecting);
                 drop(manager);
                 emit_status(
                     &reconnect_events,
@@ -659,9 +561,6 @@ impl TunnelManager {
                         let is_current = {
                             let mut manager = m_state.lock().await;
                             if manager.operations.get(&tunnel_id) == Some(&operation_id) {
-                                manager
-                                    .statuses
-                                    .insert(tunnel_id.clone(), TunnelStatus::Failed);
                                 manager.operations.remove(&tunnel_id);
                                 true
                             } else {
@@ -712,7 +611,7 @@ mod tests {
 
     #[tokio::test]
     async fn cancelling_an_operation_allows_a_fresh_start_generation() {
-        let manager = Arc::new(Mutex::new(TunnelManager::new()));
+        let manager = Arc::new(Mutex::new(TunnelManager::with_event_sink(Arc::new(|_| {}))));
         let first = TunnelManager::begin_operation(&manager, "tunnel-1")
             .await
             .unwrap();
@@ -732,5 +631,102 @@ mod tests {
             .unwrap();
         assert_ne!(first, second);
         assert!(TunnelManager::operation_is_current(&manager, "tunnel-1", second).await);
+    }
+
+    #[test]
+    fn failed_jump_configuration_allows_retry() {
+        const CHILD: &str = "TUNNEL_MATE_START_FAILURE_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            // Isolate the configuration and activity log without changing process-wide paths.
+            let profile = tempfile::tempdir().unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "manager::tests::failed_jump_configuration_allows_retry",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env("TUNNEL_MATE_CONFIG_DIR", profile.path())
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let (events, received) = std::sync::mpsc::channel();
+                let manager = Arc::new(Mutex::new(TunnelManager::with_event_sink(Arc::new(
+                    move |event| {
+                        events.send(event).unwrap();
+                    },
+                ))));
+                let mut tunnel = Tunnel {
+                    id: "retry".into(),
+                    name: "Retry".into(),
+                    description: None,
+                    group_id: None,
+                    ssh_host: "127.0.0.1".into(),
+                    ssh_port: 1,
+                    ssh_user: "test".into(),
+                    ssh_identity_file: None,
+                    ssh_password: None,
+                    jump_host_enabled: true,
+                    jump_host_id: Some("missing".into()),
+                    jump_host: None,
+                    jump_port: None,
+                    jump_user: None,
+                    jump_identity_file: None,
+                    jump_password: None,
+                    forward: crate::config::ForwardSpec::Socks5 {
+                        listen: crate::config::Endpoint {
+                            host: "127.0.0.1".into(),
+                            port: 1080,
+                        },
+                    },
+                    start_with_app: false,
+                    auto_reconnect: false,
+                    retry_count: 0,
+                    retry_interval: 1,
+                };
+                let error = TunnelManager::start_tunnel(
+                    manager.clone(),
+                    tunnel.clone(),
+                    None,
+                    LogSink::Silent,
+                )
+                .await
+                .unwrap_err();
+                assert!(error.contains("jump host reference was not found"));
+                let statuses = received
+                    .try_iter()
+                    .filter_map(|event| match event {
+                        RuntimeEvent::Status(status) => Some(status),
+                        RuntimeEvent::Activity(_) => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    statuses
+                        .iter()
+                        .map(|status| &status.status)
+                        .collect::<Vec<_>>(),
+                    [&TunnelStatus::Connecting, &TunnelStatus::Failed]
+                );
+                assert_eq!(statuses[1].message.as_deref(), Some(error.as_str()));
+
+                tunnel.jump_host_enabled = false;
+                tunnel.jump_host_id = None;
+                TunnelManager::start_tunnel(manager.clone(), tunnel, None, LogSink::Silent)
+                    .await
+                    .unwrap();
+                TunnelManager::stop_tunnel(manager, "retry").await.unwrap();
+            });
     }
 }

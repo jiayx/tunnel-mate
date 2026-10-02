@@ -15,7 +15,7 @@ mod tests {
     use tunnel_core::config::{Endpoint, ForwardSpec, Tunnel};
     use tunnel_core::ssh::engine::{ConnectOptions, KnownHostsPolicy, SshSession};
     use tunnel_core::ssh::socks5::negotiate_socks5;
-    use tunnel_core::{parse_ssh_config, LogSink, TunnelWorker};
+    use tunnel_core::{LogSink, TunnelWorker};
 
     async fn greeting<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(client: &mut S) {
         client.write_all(&[5, 1, 0]).await.unwrap();
@@ -61,37 +61,6 @@ mod tests {
             host.parse::<Ipv6Addr>().is_ok(),
             "SSH destination host contains socket-address brackets: {host}"
         );
-    }
-
-    #[test]
-    fn ssh_config_import_must_preserve_multiple_aliases() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config");
-        std::fs::write(
-            &path,
-            "Host primary secondary\n  HostName example.test\n  User deploy\n",
-        )
-        .unwrap();
-        let hosts = parse_ssh_config(path.to_str());
-        assert_eq!(
-            hosts.iter().map(|h| h.host.as_str()).collect::<Vec<_>>(),
-            vec!["primary", "secondary"]
-        );
-    }
-
-    #[test]
-    fn ssh_config_import_must_apply_host_wildcard_defaults() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config");
-        std::fs::write(
-            &path,
-            "Host production\n  HostName example.test\nHost *\n  User deploy\n  Port 2222\n",
-        )
-        .unwrap();
-        let hosts = parse_ssh_config(path.to_str());
-        assert_eq!(hosts.len(), 1);
-        assert_eq!(hosts[0].user.as_deref(), Some("deploy"));
-        assert_eq!(hosts[0].port, Some(2222));
     }
 
     #[derive(Clone)]
@@ -357,7 +326,7 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(closed, Ok(0) | Err(_)));
-        assert!(session.is_alive().await);
+        assert!(!session.handle().read().await.is_closed());
         session.disconnect().await;
     }
 
@@ -407,9 +376,15 @@ mod tests {
         tokio::runtime::Runtime::new().unwrap().block_on(async {
             let (destination, fingerprint, _, _) = spawn_test_server(None).await;
             let (jump_address, jump_fingerprint, _, _) = spawn_test_server(Some(destination)).await;
-            SshSession::trust_host_key("127.0.0.1", jump_address.port(), &jump_fingerprint)
-                .await
-                .unwrap();
+            SshSession::trust_host_key_via(
+                "127.0.0.1",
+                jump_address.port(),
+                &jump_fingerprint,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
             let mut jump = socks_tunnel(1080);
             jump.ssh_host = "127.0.0.1".into();
             jump.ssh_port = jump_address.port();

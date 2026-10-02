@@ -1,4 +1,5 @@
 use super::super::*;
+use super::confirmation::confirmation_panel;
 
 impl TunnelMateApp {
     pub(crate) fn render_save_confirmation(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -14,86 +15,29 @@ impl TunnelMateApp {
                 tunnel.name
             )
         };
-        modal_backdrop()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(rgba(0x080a0dd6))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .w(px(460.0))
-                    .max_w(relative(0.94))
-                    .rounded(px(14.0))
-                    .border_1()
-                    .border_color(BORDER)
-                    .bg(SURFACE)
-                    .p(px(22.0))
-                    .child(
-                        div()
-                            .text_size(px(16.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(TEXT)
-                            .child(self.language.pick("断开并重新连接？", "Reconnect tunnel?")),
+        let theme = self.theme;
+        confirmation_panel(
+            theme,
+            self.language.pick("断开并重新连接？", "Reconnect tunnel?"),
+            message,
+            div()
+                .child(
+                    button(
+                        theme,
+                        "cancel-reconnect",
+                        self.language.pick("取消", "Cancel"),
                     )
-                    .child(
-                        div()
-                            .mt(px(10.0))
-                            .text_size(px(12.0))
-                            .line_height(relative(1.55))
-                            .text_color(MUTED)
-                            .child(message),
+                    .on_click(cx.listener(|this, _, _, cx| this.cancel_save_confirmation(cx))),
+                )
+                .child(
+                    primary_button(
+                        theme,
+                        "confirm-reconnect",
+                        self.language.pick("保存并重连", "Save and reconnect"),
                     )
-                    .child(
-                        div()
-                            .mt(px(22.0))
-                            .flex()
-                            .justify_end()
-                            .gap(px(10.0))
-                            .child(
-                                div()
-                                    .h(px(36.0))
-                                    .px(px(15.0))
-                                    .flex()
-                                    .items_center()
-                                    .rounded(px(8.0))
-                                    .border_1()
-                                    .border_color(BORDER)
-                                    .text_size(px(12.0))
-                                    .text_color(TEXT)
-                                    .cursor_pointer()
-                                    .id("cancel-reconnect")
-                                    .key_context("TunnelButton")
-                                    .tab_index(0)
-                                    .focus(|style| style.border_color(PRIMARY_HOVER))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.cancel_save_confirmation(cx)
-                                    }))
-                                    .child(self.language.pick("取消", "Cancel")),
-                            )
-                            .child(
-                                div()
-                                    .h(px(36.0))
-                                    .px(px(15.0))
-                                    .flex()
-                                    .items_center()
-                                    .rounded(px(8.0))
-                                    .bg(PRIMARY)
-                                    .text_size(px(12.0))
-                                    .text_color(PRIMARY_TEXT)
-                                    .cursor_pointer()
-                                    .id("confirm-reconnect")
-                                    .key_context("TunnelButton")
-                                    .tab_index(0)
-                                    .focus(|style| style.border_color(PRIMARY_HOVER))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.confirm_save_and_restart(cx)
-                                    }))
-                                    .child(self.language.pick("保存并重连", "Save and reconnect")),
-                            ),
-                    ),
-            )
+                    .on_click(cx.listener(|this, _, _, cx| this.confirm_save_and_restart(cx))),
+                ),
+        )
     }
 
     pub(crate) fn render_delete_confirmation(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -125,95 +69,36 @@ impl TunnelMateApp {
             }
         };
 
-        modal_backdrop()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(rgba(0x080a0dd6))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .w(px(460.0))
-                    .max_w(relative(0.94))
-                    .rounded(px(14.0))
-                    .border_1()
-                    .border_color(BORDER)
-                    .bg(SURFACE)
-                    .p(px(22.0))
-                    .child(
-                        div()
-                            .text_size(px(16.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(TEXT)
-                            .child(self.language.pick("删除隧道？", "Delete tunnel?")),
+        let theme = self.theme;
+        confirmation_panel(
+            theme,
+            self.language.pick("删除隧道？", "Delete tunnel?"),
+            message,
+            div()
+                .child(
+                    button(
+                        theme,
+                        "cancel-delete-tunnel",
+                        self.language.pick("取消", "Cancel"),
                     )
-                    .child(
-                        div()
-                            .mt(px(10.0))
-                            .text_size(px(12.0))
-                            .line_height(relative(1.55))
-                            .text_color(MUTED)
-                            .child(message),
+                    .on_click(cx.listener(|this, _, _, cx| this.cancel_delete_confirmation(cx))),
+                )
+                .child(
+                    button(
+                        theme,
+                        "confirm-delete-tunnel",
+                        if running {
+                            self.language.pick("停止并删除", "Stop and delete")
+                        } else {
+                            self.language.pick("删除", "Delete")
+                        },
                     )
-                    .child(
-                        div()
-                            .mt(px(22.0))
-                            .flex()
-                            .justify_end()
-                            .gap(px(10.0))
-                            .child(
-                                div()
-                                    .h(px(36.0))
-                                    .px(px(15.0))
-                                    .flex()
-                                    .items_center()
-                                    .rounded(px(8.0))
-                                    .border_1()
-                                    .border_color(BORDER)
-                                    .text_size(px(12.0))
-                                    .text_color(TEXT)
-                                    .cursor_pointer()
-                                    .id("cancel-delete-tunnel")
-                                    .key_context("TunnelButton")
-                                    .tab_index(0)
-                                    .focus(|style| style.border_color(PRIMARY_HOVER))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.cancel_delete_confirmation(cx)
-                                    }))
-                                    .child(self.language.pick("取消", "Cancel")),
-                            )
-                            .child(
-                                div()
-                                    .h(px(36.0))
-                                    .px(px(15.0))
-                                    .flex()
-                                    .items_center()
-                                    .rounded(px(8.0))
-                                    .border_1()
-                                    .border_color(DANGER)
-                                    .bg(glass(0xdc747c, 0.16))
-                                    .text_size(px(12.0))
-                                    .text_color(DANGER)
-                                    .cursor_pointer()
-                                    .hover(|style| style.bg(glass(0xdc747c, 0.24)))
-                                    .id("confirm-delete-tunnel")
-                                    .key_context("TunnelButton")
-                                    .tab_index(0)
-                                    .focus(|style| style.border_color(PRIMARY_HOVER))
-                                    .on_click(
-                                        cx.listener(|this, _, _, cx| {
-                                            this.confirm_delete_tunnel(cx)
-                                        }),
-                                    )
-                                    .child(if running {
-                                        self.language.pick("停止并删除", "Stop and delete")
-                                    } else {
-                                        self.language.pick("删除", "Delete")
-                                    }),
-                            ),
-                    ),
-            )
+                    .border_color(theme.danger)
+                    .bg(theme.danger_bg)
+                    .text_color(theme.danger)
+                    .on_click(cx.listener(|this, _, _, cx| this.confirm_delete_tunnel(cx))),
+                ),
+        )
     }
 
     pub(crate) fn render_group_delete_confirmation(
@@ -248,88 +133,33 @@ impl TunnelMateApp {
             )
         };
 
-        modal_backdrop()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(rgba(0x080a0dd6))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .w(px(460.0))
-                    .max_w(relative(0.94))
-                    .rounded(px(14.0))
-                    .border_1()
-                    .border_color(BORDER)
-                    .bg(SURFACE)
-                    .p(px(22.0))
-                    .child(
-                        div()
-                            .text_size(px(16.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(TEXT)
-                            .child(self.language.pick("删除分组？", "Delete group?")),
+        let theme = self.theme;
+        confirmation_panel(
+            theme,
+            self.language.pick("删除分组？", "Delete group?"),
+            message,
+            div()
+                .child(
+                    button(
+                        theme,
+                        "cancel-delete-group",
+                        self.language.pick("取消", "Cancel"),
                     )
-                    .child(
-                        div()
-                            .mt(px(10.0))
-                            .text_size(px(12.0))
-                            .line_height(relative(1.55))
-                            .text_color(MUTED)
-                            .child(message),
-                    )
-                    .child(
-                        div()
-                            .mt(px(22.0))
-                            .flex()
-                            .justify_end()
-                            .gap(px(10.0))
-                            .child(
-                                div()
-                                    .h(px(36.0))
-                                    .px(px(15.0))
-                                    .flex()
-                                    .items_center()
-                                    .rounded(px(8.0))
-                                    .border_1()
-                                    .border_color(BORDER)
-                                    .text_size(px(12.0))
-                                    .text_color(TEXT)
-                                    .cursor_pointer()
-                                    .id("cancel-delete-group")
-                                    .key_context("TunnelButton")
-                                    .tab_index(0)
-                                    .focus(|style| style.border_color(PRIMARY_HOVER))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.cancel_group_delete_confirmation(cx)
-                                    }))
-                                    .child(self.language.pick("取消", "Cancel")),
-                            )
-                            .child(
-                                div()
-                                    .h(px(36.0))
-                                    .px(px(15.0))
-                                    .flex()
-                                    .items_center()
-                                    .rounded(px(8.0))
-                                    .border_1()
-                                    .border_color(DANGER)
-                                    .bg(glass(0xdc747c, 0.16))
-                                    .text_size(px(12.0))
-                                    .text_color(DANGER)
-                                    .cursor_pointer()
-                                    .hover(|style| style.bg(glass(0xdc747c, 0.24)))
-                                    .id("confirm-delete-group")
-                                    .key_context("TunnelButton")
-                                    .tab_index(0)
-                                    .focus(|style| style.border_color(PRIMARY_HOVER))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.confirm_delete_current_group(cx)
-                                    }))
-                                    .child(self.language.pick("删除分组", "Delete group")),
-                            ),
+                    .on_click(
+                        cx.listener(|this, _, _, cx| this.cancel_group_delete_confirmation(cx)),
                     ),
-            )
+                )
+                .child(
+                    button(
+                        theme,
+                        "confirm-delete-group",
+                        self.language.pick("删除分组", "Delete group"),
+                    )
+                    .border_color(theme.danger)
+                    .bg(theme.danger_bg)
+                    .text_color(theme.danger)
+                    .on_click(cx.listener(|this, _, _, cx| this.confirm_delete_current_group(cx))),
+                ),
+        )
     }
 }

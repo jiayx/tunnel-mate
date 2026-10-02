@@ -6,20 +6,27 @@ impl TunnelMateApp {
         form: &TunnelForm,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
+        let theme = self.theme;
         div()
             .flex()
             .flex_col()
             .gap(px(16.0))
+            .pt(px(12.0))
+            .border_t_1()
+            .border_color(theme.border_soft)
             .child(
                 button(
+                    theme,
                     "advanced-settings",
                     self.language.pick("高级设置", "Advanced settings"),
                 )
                 .w_full()
                 .justify_between()
                 .h(px(40.0))
-                .border_color(BORDER_SOFT)
-                .child(div().text_color(MUTED).child(if form.advanced {
+                .px(px(0.0))
+                .border_color(rgba(0x00000000))
+                .bg(rgba(0x00000000))
+                .child(div().text_color(theme.muted).child(if form.advanced {
                     self.language.pick("收起 ↑", "Collapse ↑")
                 } else {
                     self.language
@@ -30,6 +37,7 @@ impl TunnelMateApp {
             .when(form.advanced, |panel| {
                 panel
                     .child(Self::form_field(
+                        theme,
                         self.language.pick("说明（可选）", "Description (optional)"),
                         form.description.clone(),
                     ))
@@ -43,9 +51,13 @@ impl TunnelMateApp {
                                 self.language
                                     .pick("应用启动时连接", "Connect when app starts"),
                             )
-                            .child(toggle("connect-on-startup", form.start_with_app).on_click(
-                                cx.listener(|this, _, _, cx| this.toggle_form_start_with_app(cx)),
-                            )),
+                            .child(
+                                toggle(theme, "connect-on-startup", form.start_with_app).on_click(
+                                    cx.listener(|this, _, _, cx| {
+                                        this.toggle_form_start_with_app(cx)
+                                    }),
+                                ),
+                            ),
                     )
                     .child(
                         div()
@@ -57,20 +69,24 @@ impl TunnelMateApp {
                                 self.language
                                     .pick("断线后自动重连", "Reconnect automatically"),
                             )
-                            .child(toggle("auto-reconnect", form.auto_reconnect).on_click(
-                                cx.listener(|this, _, _, cx| this.toggle_form_reconnect(cx)),
-                            )),
+                            .child(
+                                toggle(theme, "auto-reconnect", form.auto_reconnect).on_click(
+                                    cx.listener(|this, _, _, cx| this.toggle_form_reconnect(cx)),
+                                ),
+                            ),
                     )
                     .child(
                         div()
                             .flex()
                             .gap(px(14.0))
                             .child(div().flex_1().child(Self::required_form_field(
+                                theme,
                                 self.language.pick("重试次数", "Retry count"),
                                 form.retry_count.clone(),
                             )))
                             .child(
                                 div().flex_1().child(Self::required_form_field(
+                                    theme,
                                     self.language
                                         .pick("重试间隔（秒）", "Retry interval (seconds)"),
                                     form.retry_interval.clone(),
@@ -81,14 +97,14 @@ impl TunnelMateApp {
                         div()
                             .pt(px(16.0))
                             .border_t_1()
-                            .border_color(BORDER_SOFT)
+                            .border_color(theme.border_soft)
                             .flex()
                             .items_center()
                             .justify_between()
                             .text_size(px(13.0))
                             .child(self.language.pick("使用跳板机", "Use jump host"))
                             .child(
-                                toggle("use-jump-host", form.jump_enabled).on_click(
+                                toggle(theme, "use-jump-host", form.jump_enabled).on_click(
                                     cx.listener(|this, _, _, cx| this.toggle_jump_host(cx)),
                                 ),
                             ),
@@ -99,20 +115,19 @@ impl TunnelMateApp {
                                 .flex()
                                 .flex_col()
                                 .gap(px(14.0))
-                                .p(px(16.0))
-                                .rounded(px(10.0))
-                                .bg(APP_BG)
                                 .child(
                                     div()
                                         .flex()
                                         .items_center()
                                         .justify_between()
                                         .child(section_heading(
+                                            theme,
                                             self.language
                                                 .pick("跳板机连接", "Jump host connection"),
                                         ))
                                         .child(
                                             button(
+                                                theme,
                                                 "choose-jump-ssh",
                                                 self.language.pick(
                                                     "从 SSH config 选择…",
@@ -133,16 +148,19 @@ impl TunnelMateApp {
                                         .gap(px(10.0))
                                         .child(div().flex_1().min_w_0().child(
                                             Self::required_form_field(
+                                                theme,
                                                 self.language.pick("主机", "Host"),
                                                 form.jump_host.clone(),
                                             ),
                                         ))
                                         .child(div().w(px(84.0)).child(Self::required_form_field(
+                                            theme,
                                             self.language.pick("端口", "Port"),
                                             form.jump_port.clone(),
                                         )))
                                         .child(div().w(px(140.0)).child(
                                             Self::required_form_field(
+                                                theme,
                                                 self.language.pick("用户", "User"),
                                                 form.jump_user.clone(),
                                             ),
@@ -155,6 +173,7 @@ impl TunnelMateApp {
                                         .gap(px(8.0))
                                         .child(div().flex_1().min_w_0().child(
                                             Self::form_field(
+                                                theme,
                                                 self.language.pick(
                                                     "私钥文件（可选）",
                                                     "Private key (optional)",
@@ -164,6 +183,7 @@ impl TunnelMateApp {
                                         ))
                                         .child(
                                             button(
+                                                theme,
                                                 "choose-jump-key",
                                                 self.language.pick("选择…", "Choose…"),
                                             )
@@ -179,6 +199,7 @@ impl TunnelMateApp {
                                         ),
                                 )
                                 .child(Self::form_field(
+                                    theme,
                                     self.language.pick("密码（可选）", "Password (optional)"),
                                     form.jump_password.clone(),
                                 )),

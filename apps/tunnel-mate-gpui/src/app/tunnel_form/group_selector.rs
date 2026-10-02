@@ -6,123 +6,89 @@ impl TunnelMateApp {
         form: &TunnelForm,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
+        let theme = self.theme;
+        let ungrouped = self.language.pick("未分组", "Ungrouped");
         let group_name = form
             .group_id
             .as_ref()
             .and_then(|id| self.config.groups.iter().find(|group| &group.id == id))
             .map(|group| group.name.as_str())
-            .unwrap_or(self.language.pick("未分组", "Ungrouped"));
-        let selected_group_id = form.group_id.clone();
-        let mut group_options = div()
-            .flex()
-            .flex_col()
-            .w(px(220.0))
-            .max_h(px(240.0))
+            .unwrap_or(ungrouped);
+        let mut options = div()
             .id("tunnel-group-options")
+            .size_full()
+            .track_scroll(&form.group_menu_scroll)
             .overflow_y_scroll()
             .on_scroll_wheel(stop_scroll_propagation)
+            .flex()
+            .flex_col()
             .p(px(4.0))
-            .rounded(px(8.0))
-            .border_1()
-            .border_color(BORDER)
-            .bg(color(0x111722))
-            .shadow_lg()
-            .occlude()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation());
-        let ungrouped_selected = selected_group_id.is_none();
-        group_options = group_options.child(
-            div()
-                .id("group-option-ungrouped")
-                .key_context("TunnelButton")
-                .tab_index(0)
-                .focus(|style| style.border_color(PRIMARY))
-                .h(px(32.0))
-                .px(px(9.0))
-                .flex()
-                .items_center()
-                .justify_between()
-                .rounded(px(6.0))
-                .border_1()
-                .border_color(if ungrouped_selected {
-                    glass(0x075bea, 0.48)
-                } else {
-                    rgba(0x00000000)
-                })
-                .bg(if ungrouped_selected {
-                    glass(0x075bea, 0.18)
-                } else {
-                    rgba(0x00000000)
-                })
-                .text_size(px(12.0))
-                .text_color(if ungrouped_selected { TEXT } else { MUTED })
-                .cursor_pointer()
-                .hover(|style| {
-                    style
-                        .bg(if ungrouped_selected {
-                            glass(0x075bea, 0.18)
-                        } else {
-                            glass(0x075bea, 0.10)
-                        })
-                        .border_color(glass(0x075bea, 0.36))
-                        .text_color(TEXT)
-                })
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(|this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.select_form_group(None, cx);
-                }))
-                .child(self.language.pick("未分组", "Ungrouped"))
-                .child(if ungrouped_selected { "✓" } else { "" }),
+            .pr(px(14.0));
+        let groups = std::iter::once((None, ungrouped.to_string())).chain(
+            self.config
+                .groups
+                .iter()
+                .map(|group| (Some(group.id.clone()), group.name.clone())),
         );
-        for (index, group) in self.config.groups.iter().enumerate() {
-            let group_id = group.id.clone();
-            let selected = selected_group_id.as_ref() == Some(&group.id);
-            group_options = group_options.child(
+        for (index, (group_id, name)) in groups.enumerate() {
+            let selected = form.group_id == group_id;
+            options = options.child(
                 div()
                     .id(("group-option", index))
                     .key_context("TunnelButton")
                     .tab_index(0)
-                    .focus(|style| style.border_color(PRIMARY))
+                    .focus(|style| style.border_color(theme.primary))
                     .h(px(32.0))
+                    .flex_none()
                     .px(px(9.0))
                     .flex()
                     .items_center()
-                    .justify_between()
+                    .gap(px(6.0))
                     .rounded(px(6.0))
                     .border_1()
                     .border_color(if selected {
-                        glass(0x075bea, 0.48)
+                        theme.selected_border
                     } else {
                         rgba(0x00000000)
                     })
                     .bg(if selected {
-                        glass(0x075bea, 0.18)
+                        theme.selected
                     } else {
                         rgba(0x00000000)
                     })
                     .text_size(px(12.0))
-                    .text_color(if selected { TEXT } else { MUTED })
+                    .text_color(if selected { theme.text } else { theme.muted })
                     .cursor_pointer()
-                    .hover(|style| {
-                        style
-                            .bg(if selected {
-                                glass(0x075bea, 0.18)
-                            } else {
-                                glass(0x075bea, 0.10)
-                            })
-                            .border_color(glass(0x075bea, 0.36))
-                            .text_color(TEXT)
-                    })
+                    .hover(|style| style.bg(theme.selected).text_color(theme.text))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
-                        this.select_form_group(Some(group_id.clone()), cx)
+                        this.select_form_group(group_id.clone(), cx);
                     }))
-                    .child(group.name.clone())
-                    .child(if selected { "✓" } else { "" }),
+                    .child(div().flex_1().min_w_0().truncate().child(name))
+                    .when(selected, |option| option.child("✓")),
             );
         }
+        let group_options = div()
+            .relative()
+            .w(px(220.0))
+            .h(px(
+                ((self.config.groups.len() + 1) as f32 * 32.0 + 8.0).min(240.0)
+            ))
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.surface)
+            .shadow_lg()
+            .occlude()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(options)
+            .child(crate::scrollbar::scrollbar(
+                "group-options-scrollbar",
+                theme,
+                form.group_menu_scroll.clone(),
+            ));
         div()
             .relative()
             .w(px(220.0))
@@ -132,31 +98,42 @@ impl TunnelMateApp {
                     .id("form-group-selector")
                     .key_context("TunnelButton")
                     .tab_index(0)
-                    .focus(|style| style.border_color(PRIMARY))
+                    .focus(|style| style.border_color(theme.primary))
                     .w_full()
                     .h_full()
                     .px(px(11.0))
                     .flex()
                     .items_center()
-                    .justify_between()
+                    .gap(px(6.0))
                     .rounded(px(7.0))
                     .border_1()
                     .border_color(if form.group_menu_open {
-                        PRIMARY
+                        theme.primary
                     } else {
-                        BORDER
+                        theme.border
                     })
-                    .bg(APP_BG)
+                    .bg(theme.app_bg)
                     .text_size(px(12.0))
-                    .text_color(TEXT)
+                    .text_color(theme.text)
                     .cursor_pointer()
-                    .hover(|style| style.bg(SURFACE_HOVER))
+                    .hover(|style| style.bg(theme.surface_hover))
                     .on_click(cx.listener(|this, _, _, cx| {
                         cx.stop_propagation();
                         this.toggle_form_group_menu(cx);
                     }))
-                    .child(group_name.to_string())
-                    .child(Self::disclosure_chevron(form.group_menu_open, "▴", "▾")),
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .child(group_name.to_string()),
+                    )
+                    .child(Self::disclosure_chevron(
+                        theme,
+                        form.group_menu_open,
+                        "▴",
+                        "▾",
+                    )),
             )
             .when(form.group_menu_open, |container| {
                 container.child(

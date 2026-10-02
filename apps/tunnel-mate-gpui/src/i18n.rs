@@ -62,6 +62,7 @@ mod tests {
     #[test]
     fn chooses_language_from_locale() {
         assert_eq!(Language::from_locale("zh-CN"), Language::Zh);
+        assert_eq!(Language::from_locale("zh_Hant_TW"), Language::Zh);
         assert_eq!(Language::from_locale("en-US"), Language::En);
         assert_eq!(Language::from_locale("ja-JP"), Language::En);
     }

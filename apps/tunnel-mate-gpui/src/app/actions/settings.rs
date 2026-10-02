@@ -10,7 +10,7 @@ impl TunnelMateApp {
             .ssh_config_path
             .clone()
             .unwrap_or_default();
-        self.settings_form = Some(SettingsForm {
+        let form = SettingsForm {
             validation_error: None,
             scroll: gpui::ScrollHandle::new(),
             launch_on_startup: self.config.settings.launch_on_startup,
@@ -19,15 +19,15 @@ impl TunnelMateApp {
             keep_alive: cx.new(|cx| TextInput::new(cx, "30", keep_alive)),
             connect_timeout: cx.new(|cx| TextInput::new(cx, "15", connect_timeout)),
             ssh_config_path: cx.new(|cx| TextInput::new(cx, "~/.ssh/config", ssh_path)),
-        });
+        };
         for input in [
-            self.settings_form.as_ref().unwrap().keep_alive.clone(),
-            self.settings_form.as_ref().unwrap().connect_timeout.clone(),
-            self.settings_form.as_ref().unwrap().ssh_config_path.clone(),
+            &form.keep_alive,
+            &form.connect_timeout,
+            &form.ssh_config_path,
         ] {
-            let scroll = self.settings_form.as_ref().unwrap().scroll.clone();
+            let scroll = form.scroll.clone();
             input.update(cx, |input, _| input.set_scroll_parent(scroll));
-            cx.subscribe(&input, |this, _, _: &text_input::InputChanged, cx| {
+            cx.subscribe(input, |this, _, _: &text_input::InputChanged, cx| {
                 if let Some(form) = &mut this.settings_form {
                     form.validation_error = None;
                 }
@@ -35,6 +35,7 @@ impl TunnelMateApp {
             })
             .detach();
         }
+        self.settings_form = Some(form);
         cx.notify();
     }
 
@@ -63,12 +64,12 @@ impl TunnelMateApp {
                 ),
             ),
         ];
-        let mut parsed = Vec::new();
-        for (input, message) in values {
+        let mut parsed = [0; 2];
+        for (index, (input, message)) in values.into_iter().enumerate() {
             match input.read(cx).value().trim().parse::<u32>() {
                 Ok(value) if value > 0 => {
                     input.update(cx, |input, cx| input.set_invalid(false, cx));
-                    parsed.push(value);
+                    parsed[index] = value;
                 }
                 _ => {
                     input.update(cx, |input, cx| input.set_invalid(true, cx));
@@ -79,7 +80,7 @@ impl TunnelMateApp {
                 }
             }
         }
-        let [keep_alive, connect_timeout] = [parsed[0], parsed[1]];
+        let [keep_alive, connect_timeout] = parsed;
         let form = self.settings_form.as_ref().unwrap();
         let ssh_path = form.ssh_config_path.read(cx).value();
         let mut next_config = self.config.clone();

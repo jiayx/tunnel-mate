@@ -1,6 +1,6 @@
 use super::*;
 
-fn render_activity_row(event: LogEvent) -> gpui::Div {
+fn render_activity_row(theme: Theme, event: LogEvent) -> gpui::Div {
     let timestamp = event.timestamp.format("%m-%d %H:%M").to_string();
     let tunnel_name = event.tunnel_name.unwrap_or_else(|| "Tunnel Mate".into());
     div()
@@ -9,9 +9,9 @@ fn render_activity_row(event: LogEvent) -> gpui::Div {
         .w_full()
         .h(px(76.0))
         .flex_none()
-        .px(px(18.0))
+        .px(px(24.0))
         .border_b_1()
-        .border_color(BORDER_SOFT)
+        .border_color(theme.border_soft)
         .child(
             div()
                 .size(px(7.0))
@@ -19,10 +19,10 @@ fn render_activity_row(event: LogEvent) -> gpui::Div {
                 .rounded(px(4.0))
                 .mr(px(14.0))
                 .bg(match event.event_type {
-                    tunnel_core::event_logger::EventType::Failed => DANGER,
+                    tunnel_core::event_logger::EventType::Failed => theme.danger,
                     tunnel_core::event_logger::EventType::Started
-                    | tunnel_core::event_logger::EventType::Reconnected => SUCCESS,
-                    _ => MUTED_DARK,
+                    | tunnel_core::event_logger::EventType::Reconnected => theme.success,
+                    _ => theme.muted_dark,
                 }),
         )
         .child(
@@ -35,14 +35,14 @@ fn render_activity_row(event: LogEvent) -> gpui::Div {
                 .child(
                     div()
                         .text_size(px(14.0))
-                        .text_color(TEXT)
+                        .text_color(theme.text)
                         .truncate()
                         .child(tunnel_name),
                 )
                 .child(
                     div()
                         .text_size(px(12.0))
-                        .text_color(MUTED)
+                        .text_color(theme.muted)
                         .truncate()
                         .child(event.message),
                 ),
@@ -52,13 +52,14 @@ fn render_activity_row(event: LogEvent) -> gpui::Div {
                 .flex_none()
                 .ml(px(14.0))
                 .text_size(px(12.0))
-                .text_color(MUTED_DARK)
+                .text_color(theme.muted_dark)
                 .child(timestamp),
         )
 }
 
 impl TunnelMateApp {
     pub(super) fn render_workspace(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = self.theme;
         let tunnels = self.filtered_tunnels(cx);
         let count = tunnels.len();
         let active = tunnels.iter().filter(|t| self.is_active(&t.id)).count();
@@ -78,25 +79,31 @@ impl TunnelMateApp {
                 if count == 1 { "tunnel" } else { "tunnels" }
             )
         };
-        let mut list = div().flex_1().min_h(px(0.0)).mx(px(22.0)).mb(px(20.0));
+        let mut list = div()
+            .relative()
+            .flex_1()
+            .min_h(px(0.0))
+            .border_t_1()
+            .border_color(theme.border_soft);
         if activity && !self.events.is_empty() {
             let events = self.events.clone();
             list = list
-                .rounded(px(12.0))
-                .border_1()
-                .border_color(BORDER_SOFT)
-                .bg(SURFACE)
                 .child(
                     uniform_list("activity-list", events.len(), move |range, _, _| {
                         events
                             .newest_in(range)
                             .into_iter()
-                            .map(render_activity_row)
+                            .map(|event| render_activity_row(theme, event))
                             .collect::<Vec<_>>()
                     })
                     .track_scroll(&self.activity_scroll)
                     .size_full(),
-                );
+                )
+                .child(crate::scrollbar::scrollbar(
+                    "activity-scrollbar",
+                    theme,
+                    self.activity_scroll.0.borrow().base_handle.clone(),
+                ));
         } else if tunnels.is_empty() {
             let first = self.config.tunnels.is_empty();
             let title = if activity {
@@ -124,10 +131,7 @@ impl TunnelMateApp {
                 )
             };
             list = list
-                .rounded(px(14.0))
-                .border_1()
-                .border_color(BORDER_SOFT)
-                .bg(glass(0x1a2230, 0.35))
+                .px(px(24.0))
                 .flex()
                 .flex_col()
                 .items_center()
@@ -141,17 +145,20 @@ impl TunnelMateApp {
                         .items_center()
                         .justify_center()
                         .rounded(px(18.0))
-                        .bg(SURFACE)
+                        .bg(theme.surface)
                         .border_1()
-                        .border_color(BORDER)
+                        .border_color(theme.border)
                         .child(
-                            icon(if activity {
-                                "icons/activity"
-                            } else {
-                                "icons/tunnels"
-                            })
+                            icon(
+                                theme,
+                                if activity {
+                                    "icons/activity"
+                                } else {
+                                    "icons/tunnels"
+                                },
+                            )
                             .size(px(28.0))
-                            .text_color(MUTED),
+                            .text_color(theme.muted),
                         ),
                 )
                 .child(
@@ -163,7 +170,7 @@ impl TunnelMateApp {
                 .child(
                     div()
                         .text_size(px(13.0))
-                        .text_color(MUTED)
+                        .text_color(theme.muted)
                         .child(description),
                 )
                 .when(!activity && first, |empty| {
@@ -174,6 +181,7 @@ impl TunnelMateApp {
                             .gap(px(10.0))
                             .child(
                                 primary_button(
+                                    theme,
                                     "empty-new",
                                     self.language.pick("新建隧道", "New tunnel"),
                                 )
@@ -181,6 +189,7 @@ impl TunnelMateApp {
                             )
                             .child(
                                 button(
+                                    theme,
                                     "empty-ssh-config",
                                     self.language
                                         .pick("从 SSH config 导入", "Import from SSH config"),
@@ -197,6 +206,7 @@ impl TunnelMateApp {
                 .when(!activity && !first, |empty| {
                     empty.child(
                         button(
+                            theme,
                             "reset-filter",
                             self.language.pick("查看全部隧道", "Show all tunnels"),
                         )
@@ -208,21 +218,27 @@ impl TunnelMateApp {
                 });
         } else {
             let ids: Vec<String> = tunnels.iter().map(|t| t.id.clone()).collect();
-            list = list.child(
-                uniform_list(
-                    "tunnel-list",
-                    count,
-                    cx.processor(move |this, range: Range<usize>, _, cx| {
-                        range
-                            .filter_map(|index| ids.get(index))
-                            .filter_map(|id| this.config.tunnels.iter().find(|t| &t.id == id))
-                            .map(|tunnel| this.render_tunnel_row(tunnel, cx))
-                            .collect::<Vec<_>>()
-                    }),
+            list = list
+                .child(
+                    uniform_list(
+                        "tunnel-list",
+                        count,
+                        cx.processor(move |this, range: Range<usize>, _, cx| {
+                            range
+                                .filter_map(|index| ids.get(index))
+                                .filter_map(|id| this.config.tunnels.iter().find(|t| &t.id == id))
+                                .map(|tunnel| this.render_tunnel_row(tunnel, cx))
+                                .collect::<Vec<_>>()
+                        }),
+                    )
+                    .track_scroll(&self.tunnel_scroll)
+                    .size_full(),
                 )
-                .track_scroll(&self.tunnel_scroll)
-                .size_full(),
-            );
+                .child(crate::scrollbar::scrollbar(
+                    "tunnel-scrollbar",
+                    theme,
+                    self.tunnel_scroll.0.borrow().base_handle.clone(),
+                ));
         }
         let mut center = div()
             .flex()
@@ -231,7 +247,7 @@ impl TunnelMateApp {
             .min_w_0()
             .min_h(px(0.0))
             .h_full()
-            .bg(APP_BG)
+            .bg(theme.app_bg)
             .child(
                 div()
                     .h(px(96.0))
@@ -254,11 +270,17 @@ impl TunnelMateApp {
                                     .truncate()
                                     .child(self.title()),
                             )
-                            .child(div().text_size(px(12.0)).text_color(MUTED).child(subtitle)),
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(theme.muted)
+                                    .child(subtitle),
+                            ),
                     )
                     .when(!activity, |header| {
                         header.child(
                             primary_button(
+                                theme,
                                 "new-tunnel",
                                 self.language.pick("新建隧道", "New tunnel"),
                             )
@@ -269,6 +291,7 @@ impl TunnelMateApp {
                     .when(activity && !self.events.is_empty(), |header| {
                         header.child(
                             button(
+                                theme,
                                 "clear-activity",
                                 self.language.pick("清空记录", "Clear history"),
                             )
@@ -290,6 +313,7 @@ impl TunnelMateApp {
                             toolbar
                                 .child(
                                     button(
+                                        theme,
                                         "edit-group",
                                         self.language.pick("编辑分组", "Edit group"),
                                     )
@@ -299,10 +323,11 @@ impl TunnelMateApp {
                                 )
                                 .child(
                                     button(
+                                        theme,
                                         "delete-group",
                                         self.language.pick("删除分组", "Delete group"),
                                     )
-                                    .text_color(DANGER)
+                                    .text_color(theme.danger)
                                     .on_click(cx.listener(
                                         |this, _, _, cx| this.request_delete_current_group(cx),
                                     )),
@@ -318,10 +343,10 @@ impl TunnelMateApp {
                     .p(px(12.0))
                     .rounded(px(9.0))
                     .border_1()
-                    .border_color(DANGER)
-                    .bg(glass(0xdc747c, 0.08))
+                    .border_color(theme.danger)
+                    .bg(theme.danger_bg)
                     .text_size(px(12.0))
-                    .text_color(DANGER)
+                    .text_color(theme.danger)
                     .child(error.clone()),
             );
         }

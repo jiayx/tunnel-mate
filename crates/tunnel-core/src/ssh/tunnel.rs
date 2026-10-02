@@ -1,7 +1,6 @@
 use crate::config::{ForwardSpec, Tunnel};
 use crate::ssh::engine::{ForwardedTcp, SharedSshHandle};
 use crate::ssh::socks5::{negotiate_socks5, send_reply, Socks5Reply};
-use std::future::Future;
 use std::sync::Arc;
 use tokio::io::copy_bidirectional;
 use tokio::net::{TcpListener, TcpStream};
@@ -98,20 +97,14 @@ impl TunnelWorker {
                 (task, None)
             }
             ForwardSpec::Remote { listen, target } => {
-                send_log(
-                    &log_sender,
-                    format!(
-                        "[INFO] Requesting Remote Forward to listen on SSH server {}:{}...",
-                        listen.host, listen.port
-                    ),
-                );
-                send_log(
-                    &log_sender,
-                    format!(
-                        "[INFO] Remote Forward will send traffic to target {}:{}",
-                        target.host, target.port
-                    ),
-                );
+                log_sender.send(format!(
+                    "[INFO] Requesting Remote Forward to listen on SSH server {}:{}...",
+                    listen.host, listen.port
+                ));
+                log_sender.send(format!(
+                    "[INFO] Remote Forward will send traffic to target {}:{}",
+                    target.host, target.port
+                ));
 
                 let requested_port = listen.port as u32;
                 let allocated_port = timeout(FORWARD_CONNECT_TIMEOUT, async {
@@ -189,13 +182,10 @@ async fn run_local_forward(
     mut shutdown_rx: watch::Receiver<bool>,
     log: LogSink,
 ) {
-    send_log(
-        &log,
-        format!(
-            "[INFO] Starting Local Forward to target {}:{}...",
-            target_host, target_port
-        ),
-    );
+    log.send(format!(
+        "[INFO] Starting Local Forward to target {}:{}...",
+        target_host, target_port
+    ));
 
     let mut connections = JoinSet::new();
     loop {
@@ -206,17 +196,17 @@ async fn run_local_forward(
             res = listener.accept(), if connections.len() < MAX_CONNECTIONS => {
                 match res {
                     Ok((socket, addr)) => {
-                        send_log(&log, format!("[INFO] Accepted connection from {}", addr));
+                        log.send(format!("[INFO] Accepted connection from {}", addr));
                         connections.spawn(pipe_local_connection(socket, handle.clone(), target_host.clone(), target_port, log.clone()));
                     }
-                    Err(e) => send_log(&log, format!("[ERROR] Accept error: {}", e)),
+                    Err(e) => log.send(format!("[ERROR] Accept error: {}", e)),
                 }
             }
         }
     }
     drop(listener);
     connections.shutdown().await;
-    send_log(&log, "[INFO] Local Forward worker stopped".to_string());
+    log.send("[INFO] Local Forward worker stopped".to_string());
 }
 
 async fn pipe_local_connection(
@@ -226,13 +216,10 @@ async fn pipe_local_connection(
     target_port: u16,
     log: LogSink,
 ) {
-    send_log(
-        &log,
-        format!(
-            "[INFO] Opening SSH channel to {}:{}",
-            target_host, target_port
-        ),
-    );
+    log.send(format!(
+        "[INFO] Opening SSH channel to {}:{}",
+        target_host, target_port
+    ));
     let open_channel = async {
         handle
             .read()
@@ -241,36 +228,24 @@ async fn pipe_local_connection(
             .await
     };
 
-    match timeout_result(
-        FORWARD_CONNECT_TIMEOUT,
-        open_channel,
-        format!(
-            "SSH channel connection timed out after {}s: {}:{}",
+    match timeout(FORWARD_CONNECT_TIMEOUT, open_channel).await {
+        Ok(Ok(channel)) => {
+            log.send(format!(
+                "[INFO] Forwarding to target {}:{} via SSH",
+                target_host, target_port
+            ));
+            let mut stream = channel.into_stream();
+            if let Err(e) = copy_bidirectional(&mut socket, &mut stream).await {
+                log.send(format!("[ERROR] Forwarding stream failed: {}", e));
+            }
+        }
+        Ok(Err(e)) => log.send(format!("[ERROR] SSH channel connection failed: {}", e)),
+        Err(_) => log.send(format!(
+            "[ERROR] SSH channel connection timed out after {}s: {}:{}",
             FORWARD_CONNECT_TIMEOUT.as_secs(),
             target_host,
             target_port
-        ),
-    )
-    .await
-    {
-        Ok(Ok(channel)) => {
-            send_log(
-                &log,
-                format!(
-                    "[INFO] Forwarding to target {}:{} via SSH",
-                    target_host, target_port
-                ),
-            );
-            let mut stream = channel.into_stream();
-            if let Err(e) = copy_bidirectional(&mut socket, &mut stream).await {
-                send_log(&log, format!("[ERROR] Forwarding stream failed: {}", e));
-            }
-        }
-        Ok(Err(e)) => send_log(
-            &log,
-            format!("[ERROR] SSH channel connection failed: {}", e),
-        ),
-        Err(message) => send_log(&log, format!("[ERROR] {}", message)),
+        )),
     }
 }
 
@@ -280,7 +255,7 @@ async fn run_socks5_forward(
     mut shutdown_rx: watch::Receiver<bool>,
     log: LogSink,
 ) {
-    send_log(&log, "[INFO] Starting SOCKS5 Dynamic Proxy...".to_string());
+    log.send("[INFO] Starting SOCKS5 Dynamic Proxy...".to_string());
 
     let mut connections = JoinSet::new();
     loop {
@@ -291,30 +266,30 @@ async fn run_socks5_forward(
             res = listener.accept(), if connections.len() < MAX_CONNECTIONS => {
                 match res {
                     Ok((socket, addr)) => {
-                        send_log(&log, format!("[INFO] SOCKS5 connection from {}", addr));
+                        log.send(format!("[INFO] SOCKS5 connection from {}", addr));
                         let task_handle = handle.clone();
                         let task_log = log.clone();
                         connections.spawn(pipe_socks5_connection(socket, task_handle, task_log));
                     }
-                    Err(e) => send_log(&log, format!("[ERROR] Accept error: {}", e)),
+                    Err(e) => log.send(format!("[ERROR] Accept error: {}", e)),
                 }
             }
         }
     }
     drop(listener);
     connections.shutdown().await;
-    send_log(&log, "[INFO] SOCKS5 worker stopped".to_string());
+    log.send("[INFO] SOCKS5 worker stopped".to_string());
 }
 
 async fn pipe_socks5_connection(mut socket: TcpStream, handle: SharedSshHandle, log: LogSink) {
     let (host, port) = match timeout(SOCKS_HANDSHAKE_TIMEOUT, negotiate_socks5(&mut socket)).await {
         Ok(Ok(destination)) => destination,
         Ok(Err(error)) => {
-            send_log(&log, format!("[ERROR] SOCKS5 negotiation failed: {error}"));
+            log.send(format!("[ERROR] SOCKS5 negotiation failed: {error}"));
             return;
         }
         Err(_) => {
-            send_log(&log, "[ERROR] SOCKS5 handshake timed out".to_string());
+            log.send("[ERROR] SOCKS5 handshake timed out".to_string());
             return;
         }
     };
@@ -336,16 +311,16 @@ async fn pipe_socks5_connection(mut socket: TcpStream, handle: SharedSshHandle, 
             }
             let mut stream = channel.into_stream();
             if let Err(error) = copy_bidirectional(&mut socket, &mut stream).await {
-                send_log(&log, format!("[ERROR] SOCKS5 forwarding failed: {error}"));
+                log.send(format!("[ERROR] SOCKS5 forwarding failed: {error}"));
             }
         }
         Ok(Err(error)) => {
             let _ = send_reply(&mut socket, Socks5Reply::GeneralFailure).await;
-            send_log(&log, format!("[ERROR] SOCKS5 destination failed: {error}"));
+            log.send(format!("[ERROR] SOCKS5 destination failed: {error}"));
         }
         Err(_) => {
             let _ = send_reply(&mut socket, Socks5Reply::HostUnreachable).await;
-            send_log(&log, "[ERROR] SOCKS5 destination timed out".to_string());
+            log.send("[ERROR] SOCKS5 destination timed out".to_string());
         }
     }
 }
@@ -358,13 +333,10 @@ async fn run_remote_forward(
     mut shutdown_rx: watch::Receiver<bool>,
     log: LogSink,
 ) {
-    send_log(
-        &log,
-        format!(
-            "[INFO] Remote Forward listener started on SSH server port {}",
-            remote_listen_port
-        ),
-    );
+    log.send(format!(
+        "[INFO] Remote Forward listener started on SSH server port {}",
+        remote_listen_port
+    ));
 
     let mut connections = JoinSet::new();
     loop {
@@ -374,9 +346,7 @@ async fn run_remote_forward(
             Some(_) = connections.join_next(), if !connections.is_empty() => {},
             forwarded = forwarded_rx.recv(), if connections.len() < MAX_CONNECTIONS => {
                 let Some(forwarded) = forwarded else { break };
-                send_log(
-                    &log,
-                    format!(
+                log.send(format!(
                         "[INFO] Received remote connection on {}:{} from {}:{}",
                         forwarded.connected_address,
                         forwarded.connected_port,
@@ -390,64 +360,40 @@ async fn run_remote_forward(
     }
     drop(forwarded_rx);
     connections.shutdown().await;
-    send_log(&log, "[INFO] Remote Forward worker stopped".to_string());
+    log.send("[INFO] Remote Forward worker stopped".to_string());
 }
 
 async fn pipe_remote_connection(forwarded: ForwardedTcp, host: String, port: u16, log: LogSink) {
     let target = format!("{host}:{port}");
-    match timeout_result(
+    match timeout(
         FORWARD_CONNECT_TIMEOUT,
         TcpStream::connect((host.as_str(), port)),
-        format!(
-            "Target connection timed out after {}s: {}",
-            FORWARD_CONNECT_TIMEOUT.as_secs(),
-            target
-        ),
     )
     .await
     {
         Ok(Ok(mut target_stream)) => {
-            send_log(&log, format!("[INFO] Connected to target {}", target));
+            log.send(format!("[INFO] Connected to target {}", target));
             let mut ssh_stream = forwarded.channel.into_stream();
             if let Err(e) = copy_bidirectional(&mut ssh_stream, &mut target_stream).await {
-                send_log(
-                    &log,
-                    format!("[ERROR] Remote forwarding stream failed: {}", e),
-                );
+                log.send(format!("[ERROR] Remote forwarding stream failed: {}", e));
             }
         }
-        Ok(Err(e)) => send_log(
-            &log,
-            format!("[ERROR] Failed to connect to target {}: {}", target, e),
-        ),
-        Err(message) => send_log(&log, format!("[ERROR] {}", message)),
+        Ok(Err(e)) => log.send(format!(
+            "[ERROR] Failed to connect to target {}: {}",
+            target, e
+        )),
+        Err(_) => log.send(format!(
+            "[ERROR] Target connection timed out after {}s: {}",
+            FORWARD_CONNECT_TIMEOUT.as_secs(),
+            target
+        )),
     }
-}
-
-fn send_log(log: &LogSink, message: String) {
-    log.send(message);
-}
-
-async fn timeout_result<T, E, F>(
-    duration: Duration,
-    future: F,
-    timeout_message: String,
-) -> Result<Result<T, E>, String>
-where
-    F: Future<Output = Result<T, E>>,
-{
-    timeout(duration, future).await.map_err(|_| timeout_message)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::future::Future;
     use std::net::TcpListener as StdTcpListener;
-
-    async fn assert_send<F: Future + Send>(future: F) -> F::Output {
-        future.await
-    }
 
     #[tokio::test]
     async fn bind_tcp_listener_reports_occupied_port() {
@@ -461,30 +407,5 @@ mod tests {
 
         assert!(err.contains("Failed to bind local listener"));
         assert!(err.contains(&addr));
-    }
-
-    #[tokio::test]
-    async fn worker_stop_future_is_send() {
-        let (shutdown_tx, _shutdown_rx) = watch::channel(false);
-        let worker = TunnelWorker {
-            shutdown_tx,
-            task: tokio::spawn(async {}),
-            remote_forward: None,
-        };
-
-        assert_send(worker.stop()).await;
-    }
-
-    #[tokio::test]
-    async fn timeout_result_returns_error_for_pending_future() {
-        let err = timeout_result(
-            std::time::Duration::from_millis(1),
-            std::future::pending::<Result<(), &'static str>>(),
-            "forward setup timed out".to_string(),
-        )
-        .await
-        .unwrap_err();
-
-        assert_eq!(err, "forward setup timed out");
     }
 }

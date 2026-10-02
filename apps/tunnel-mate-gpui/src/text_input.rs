@@ -2,11 +2,11 @@ use std::ops::Range;
 use std::time::Duration;
 
 use gpui::{
-    actions, div, fill, point, prelude::*, px, relative, rgba, size, App, Bounds, ClipboardItem,
-    Context, CursorStyle, Element, ElementId, ElementInputHandler, Entity, EntityInputHandler,
-    FocusHandle, Focusable, GlobalElementId, KeyBinding, LayoutId, MouseButton, MouseDownEvent,
-    MouseUpEvent, PaintQuad, Pixels, Point, ShapedLine, SharedString, Style, Subscription, Task,
-    TextRun, UTF16Selection, UnderlineStyle, Window,
+    actions, div, fill, point, prelude::*, px, relative, size, App, Bounds, ClipboardItem, Context,
+    CursorStyle, Element, ElementId, ElementInputHandler, Entity, EntityInputHandler, FocusHandle,
+    Focusable, GlobalElementId, KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseUpEvent,
+    PaintQuad, Pixels, Point, ShapedLine, SharedString, Style, Subscription, Task, TextRun,
+    UTF16Selection, UnderlineStyle, Window,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -567,6 +567,7 @@ impl Element for InputElement {
         window: &mut Window,
         cx: &mut App,
     ) -> PrepaintState {
+        let theme = crate::Theme::from_appearance(window.appearance());
         let input = self.input.read(cx);
         let content = input.content.clone();
         let focused = input.focus_handle.is_focused(window);
@@ -580,7 +581,7 @@ impl Element for InputElement {
             content
         };
         let color = if input.content.is_empty() && !focused {
-            rgba(0x747b86ff).into()
+            theme.muted_dark.into()
         } else {
             window.text_style().color
         };
@@ -647,7 +648,7 @@ impl Element for InputElement {
                         point(text_left + cursor_x, bounds.top()),
                         size(px(1.5), bounds.size.height),
                     ),
-                    rgba(0x075beaff),
+                    theme.primary,
                 )),
             )
         } else {
@@ -663,7 +664,7 @@ impl Element for InputElement {
                             bounds.bottom(),
                         ),
                     ),
-                    rgba(0x075bea50),
+                    theme.selection,
                 )),
                 None,
             )
@@ -744,6 +745,7 @@ impl Element for InputElement {
 
 impl Render for TextInput {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = crate::Theme::from_appearance(window.appearance());
         if self.focus_subscriptions.is_empty() {
             let focus = self.focus_handle.clone();
             let focus_subscription = cx.on_focus(&focus, window, |input, _, cx| {
@@ -783,15 +785,15 @@ impl Render for TextInput {
             .rounded(px(7.0))
             .border_1()
             .border_color(if self.invalid {
-                crate::DANGER
+                theme.danger
             } else if focused {
-                crate::PRIMARY
+                theme.primary
             } else {
-                crate::BORDER
+                theme.border
             })
-            .bg(crate::APP_BG)
+            .bg(theme.app_bg)
             .text_size(px(13.0))
-            .text_color(crate::TEXT)
+            .text_color(theme.text)
             .child(InputElement { input: cx.entity() })
     }
 }

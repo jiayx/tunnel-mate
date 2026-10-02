@@ -1,8 +1,10 @@
 use super::super::*;
+use crate::scrollbar::scrollbar;
 
 impl TunnelMateApp {
     pub(crate) fn render_auth_prompt(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let (title, body) = match self.auth_prompt.as_ref().expect("auth prompt") {
+        let theme = self.theme;
+        let (title, body, actions, height) = match self.auth_prompt.as_ref().expect("auth prompt") {
             AuthPrompt::HostKey {
                 issue,
                 host,
@@ -13,26 +15,25 @@ impl TunnelMateApp {
                 ..
             } => {
                 let is_confirming = *confirm_replace;
-                (
-                if *confirm_replace {
-                    self.language
-                        .pick("确认更新主机密钥？", "Confirm host key update?")
+                let title = if is_confirming {
+                    self.language.pick("确认更新主机密钥？", "Confirm host key update?")
                 } else {
                     match issue {
-                    HostKeyIssue::Unknown => self.language.pick("信任 SSH 主机密钥", "Trust SSH host key"),
-                    HostKeyIssue::Changed => self.language.pick("SSH 主机密钥已变化", "SSH host key changed"),
-                    HostKeyIssue::Revoked => self.language.pick("SSH 主机密钥已撤销", "SSH host key revoked"),
+                        HostKeyIssue::Unknown => self.language.pick("信任 SSH 主机密钥", "Trust SSH host key"),
+                        HostKeyIssue::Changed => self.language.pick("SSH 主机密钥已变化", "SSH host key changed"),
+                        HostKeyIssue::Revoked => self.language.pick("SSH 主机密钥已撤销", "SSH host key revoked"),
                     }
-                },
-                div()
+                };
+                let body = div()
                     .flex()
                     .flex_col()
-                    .gap(px(10.0))
+                    .gap(px(18.0))
                     .child(
                         div()
                             .text_size(px(12.0))
-                            .text_color(MUTED)
-                            .child(match (issue, *confirm_replace, self.language) {
+                            .line_height(relative(1.5))
+                            .text_color(theme.muted)
+                            .child(match (issue, is_confirming, self.language) {
                                 (HostKeyIssue::Unknown, _, Language::Zh) => format!("首次连接 {host}:{port}，请核对指纹后再信任。"),
                                 (HostKeyIssue::Unknown, _, Language::En) => format!("First connection to {host}:{port}. Verify the fingerprint before trusting it."),
                                 (HostKeyIssue::Changed, false, Language::Zh) => format!("{host}:{port} 的主机密钥与已保存记录不一致。请通过可信渠道确认服务器确实更换了密钥，再继续更新。"),
@@ -48,155 +49,72 @@ impl TunnelMateApp {
                             div()
                                 .flex()
                                 .flex_col()
-                                .gap(px(5.0))
-                                .child(div().text_size(px(12.0)).text_color(MUTED).child(
-                                    self.language.pick("已保存的指纹", "Saved fingerprint"),
-                                ))
-                                .child(
-                                    div()
-                                        .p(px(10.0))
-                                        .rounded(px(8.0))
-                                        .bg(APP_BG)
-                                        .text_size(px(12.0))
-                                        .text_color(MUTED)
-                                        .child(saved_fingerprints.join("\n")),
-                                ),
+                                .gap(px(6.0))
+                                .text_size(px(12.0))
+                                .text_color(theme.muted)
+                                .child(self.language.pick("已保存的指纹", "Saved fingerprint"))
+                                .children(saved_fingerprints.iter().map(|fingerprint| div().child(fingerprint.clone()))),
                         )
                     })
                     .child(
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(5.0))
-                            .child(div().text_size(px(12.0)).text_color(MUTED).child(
+                            .gap(px(6.0))
+                            .text_size(px(12.0))
+                            .child(div().text_color(theme.muted).child(
                                 if *issue == HostKeyIssue::Changed {
                                     self.language.pick("服务器的新指纹", "New server fingerprint")
                                 } else {
                                     self.language.pick("服务器指纹", "Server fingerprint")
                                 },
                             ))
-                            .child(
-                                div()
-                                    .p(px(10.0))
-                                    .rounded(px(8.0))
-                                    .bg(APP_BG)
-                                    .text_size(px(12.0))
-                                    .text_color(TEXT)
-                                    .child(fingerprint.clone()),
-                            ),
-                    )
+                            .child(div().text_color(theme.text).child(fingerprint.clone())),
+                    );
+                let actions = div()
+                    .flex()
+                    .flex_wrap()
+                    .justify_end()
+                    .gap(px(8.0))
+                    .when(!is_confirming, |row| row.child(
+                        button(theme, "copy-fingerprint", self.language.pick("复制指纹", "Copy fingerprint"))
+                            .on_click(cx.listener(|this, _, _, cx| this.copy_prompted_fingerprint(cx))),
+                    ))
+                    .when(*issue == HostKeyIssue::Changed && !is_confirming, |row| row.child(
+                        button(theme, "copy-cleanup-command", self.language.pick("复制清理命令", "Copy cleanup command"))
+                            .on_click(cx.listener(|this, _, _, cx| this.copy_known_host_cleanup(cx))),
+                    ))
                     .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .justify_end()
-                            .gap(px(8.0))
-                            .when(!*confirm_replace, |row| row.child(
-                                div()
-                                    .h(px(34.0))
-                                    .px(px(12.0))
-                                    .flex()
-                                    .items_center()
-                                    .rounded(px(8.0))
-                                    .border_1()
-                                    .border_color(BORDER)
-                                    .text_size(px(12.0))
-                                    .cursor_pointer()
-                                    .id("copy-fingerprint").key_context("TunnelButton").tab_index(0).focus(|style| style.border_color(PRIMARY_HOVER)).on_click(
-                                        cx.listener(|this, _, _, cx| this.copy_prompted_fingerprint(cx)),
-                                    )
-                                    .child(self.language.pick("复制指纹", "Copy fingerprint")),
-                            ))
-                            .when(*issue == HostKeyIssue::Changed && !*confirm_replace, |row| row.child(
-                                div()
-                                    .h(px(34.0))
-                                    .px(px(12.0))
-                                    .flex()
-                                    .items_center()
-                                    .rounded(px(8.0))
-                                    .border_1()
-                                    .border_color(BORDER)
-                                    .text_size(px(12.0))
-                                    .cursor_pointer()
-                                    .id("copy-cleanup-command").key_context("TunnelButton").tab_index(0).focus(|style| style.border_color(PRIMARY_HOVER)).on_click(
-                                        cx.listener(|this, _, _, cx| this.copy_known_host_cleanup(cx)),
-                                    )
-                                    .child(self.language.pick("复制清理命令", "Copy cleanup command")),
-                            ))
-                            .child(
-                                div()
-                                    .h(px(34.0))
-                                    .px(px(12.0))
-                                    .flex()
-                                    .items_center()
-                                    .rounded(px(8.0))
-                                    .border_1()
-                                    .border_color(BORDER)
-                                    .text_size(px(12.0))
-                                    .cursor_pointer()
-                                    .id("cancel-host-key").key_context("TunnelButton").tab_index(0).focus(|style| style.border_color(PRIMARY_HOVER)).on_click(
-                                        cx.listener(move |this, _, _, cx| {
-                                            if is_confirming {
-                                                this.cancel_host_key_replacement(cx);
-                                            } else {
-                                                this.close_auth_prompt(cx);
-                                            }
-                                        }),
-                                    )
-                                    .child(if *confirm_replace || *issue == HostKeyIssue::Unknown {
-                                        self.language.pick("取消", "Cancel")
-                                    } else {
-                                        self.language.pick("关闭", "Close")
-                                    }),
-                            )
-                            .when(*issue == HostKeyIssue::Unknown, |row| row
-                            .child(
-                                div()
-                                    .h(px(34.0))
-                                    .px(px(13.0))
-                                    .flex()
-                                    .items_center()
-                                    .rounded(px(8.0))
-                                    .bg(PRIMARY)
-                                    .text_size(px(12.0))
-                                    .cursor_pointer()
-                                    .id("trust-host-key").key_context("TunnelButton").tab_index(0).focus(|style| style.border_color(PRIMARY_HOVER)).on_click(
-                                        cx.listener(|this, _, _, cx| this.trust_prompted_host(cx)),
-                                    )
-                                    .child(self.language.pick("信任并连接", "Trust and connect")),
-                            ))
-                            .when(*issue == HostKeyIssue::Changed && !*confirm_replace, |row| row.child(
-                                div()
-                                    .h(px(34.0))
-                                    .px(px(13.0))
-                                    .flex()
-                                    .items_center()
-                                    .rounded(px(8.0))
-                                    .bg(PRIMARY)
-                                    .text_size(px(12.0))
-                                    .cursor_pointer()
-                                    .id("review-host-key-replacement").key_context("TunnelButton").tab_index(0).focus(|style| style.border_color(PRIMARY_HOVER)).on_click(
-                                        cx.listener(|this, _, _, cx| this.begin_host_key_replacement(cx)),
-                                    )
-                                    .child(self.language.pick("更新密钥并连接", "Update key and connect")),
-                            ))
-                            .when(*issue == HostKeyIssue::Changed && *confirm_replace, |row| row.child(
-                                div()
-                                    .h(px(34.0))
-                                    .px(px(13.0))
-                                    .flex()
-                                    .items_center()
-                                    .rounded(px(8.0))
-                                    .bg(color(0xB83A45))
-                                    .text_size(px(12.0))
-                                    .cursor_pointer()
-                                    .id("confirm-host-key-replacement").key_context("TunnelButton").tab_index(0).focus(|style| style.border_color(PRIMARY_HOVER)).on_click(
-                                        cx.listener(|this, _, _, cx| this.replace_prompted_host_key(cx)),
-                                    )
-                                    .child(self.language.pick("确认更新并连接", "Confirm update and connect")),
-                            )),
-                    ),
-                )
+                        button(theme, "cancel-host-key", if is_confirming || *issue == HostKeyIssue::Unknown {
+                            self.language.pick("取消", "Cancel")
+                        } else {
+                            self.language.pick("关闭", "Close")
+                        })
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if is_confirming {
+                                this.cancel_host_key_replacement(cx);
+                            } else {
+                                this.close_auth_prompt(cx);
+                            }
+                        })),
+                    )
+                    .when(*issue == HostKeyIssue::Unknown, |row| row.child(
+                        primary_button(theme, "trust-host-key", self.language.pick("信任并连接", "Trust and connect"))
+                            .on_click(cx.listener(|this, _, _, cx| this.trust_prompted_host(cx))),
+                    ))
+                    .when(*issue == HostKeyIssue::Changed && !is_confirming, |row| row.child(
+                        primary_button(theme, "review-host-key-replacement", self.language.pick("更新密钥并连接", "Update key and connect"))
+                            .on_click(cx.listener(|this, _, _, cx| this.begin_host_key_replacement(cx))),
+                    ))
+                    .when(*issue == HostKeyIssue::Changed && is_confirming, |row| row.child(
+                        button(theme, "confirm-host-key-replacement", self.language.pick("确认更新并连接", "Confirm update and connect"))
+                            .bg(theme.danger_bg)
+                            .border_color(theme.danger)
+                            .text_color(theme.danger)
+                            .on_click(cx.listener(|this, _, _, cx| this.replace_prompted_host_key(cx))),
+                    ));
+                let height = if *issue == HostKeyIssue::Changed { 460.0 } else { 340.0 };
+                (title, body, actions, height)
             }
             AuthPrompt::Passphrase { input, .. } => (
                 self.language.pick("输入私钥口令", "Enter private key passphrase"),
@@ -207,79 +125,90 @@ impl TunnelMateApp {
                     .child(
                         div()
                             .text_size(px(12.0))
-                            .text_color(MUTED)
+                            .line_height(relative(1.5))
+                            .text_color(theme.muted)
                             .child(self.language.pick(
                                 "该私钥已加密，口令只用于本次连接，不会写入配置文件。",
                                 "This key is encrypted. The passphrase is used only for this connection and is never saved.",
                             )),
                     )
                     .child(Self::form_field(
+                        theme,
                         self.language.pick("私钥口令", "Private key passphrase"),
                         input.clone(),
-                    ))
+                    )),
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap(px(8.0))
                     .child(
-                        div()
-                            .flex()
-                            .justify_end()
-                            .gap(px(8.0))
-                            .child(
-                                div()
-                                    .h(px(34.0))
-                                    .px(px(12.0))
-                                    .flex()
-                                    .items_center()
-                                    .rounded(px(8.0))
-                                    .border_1()
-                                    .border_color(BORDER)
-                                    .text_size(px(12.0))
-                                    .cursor_pointer()
-                                    .id("cancel-passphrase").key_context("TunnelButton").tab_index(0).focus(|style| style.border_color(PRIMARY_HOVER)).on_click(
-                                        cx.listener(|this, _, _, cx| this.close_auth_prompt(cx)),
-                                    )
-                                    .child(self.language.pick("取消", "Cancel")),
-                            )
-                            .child(
-                                div()
-                                    .h(px(34.0))
-                                    .px(px(13.0))
-                                    .flex()
-                                    .items_center()
-                                    .rounded(px(8.0))
-                                    .bg(PRIMARY)
-                                    .text_size(px(12.0))
-                                    .cursor_pointer()
-                                    .id("submit-passphrase").key_context("TunnelButton").tab_index(0).focus(|style| style.border_color(PRIMARY_HOVER)).on_click(
-                                        cx.listener(|this, _, _, cx| this.submit_passphrase(cx)),
-                                    )
-                                    .child(self.language.pick("连接", "Connect")),
-                            ),
+                        button(theme, "cancel-passphrase", self.language.pick("取消", "Cancel"))
+                            .on_click(cx.listener(|this, _, _, cx| this.close_auth_prompt(cx))),
+                    )
+                    .child(
+                        primary_button(theme, "submit-passphrase", self.language.pick("连接", "Connect"))
+                            .on_click(cx.listener(|this, _, _, cx| this.submit_passphrase(cx))),
                     ),
+                290.0,
             ),
         };
         modal_backdrop()
             .flex()
             .items_center()
             .justify_center()
-            .bg(rgba(0x080a0dd4))
+            .bg(theme.backdrop)
             .child(
                 div()
-                    .w(px(470.0))
+                    .w(px(500.0))
+                    .max_w(relative(0.94))
+                    .h(px(height))
+                    .max_h(relative(0.90))
+                    .flex()
+                    .flex_col()
                     .rounded(px(14.0))
                     .border_1()
-                    .border_color(BORDER)
-                    .bg(SURFACE)
+                    .border_color(theme.border)
+                    .bg(theme.surface)
+                    .text_color(theme.text)
                     .child(
                         div()
                             .h(px(56.0))
+                            .flex_none()
                             .px(px(18.0))
                             .flex()
                             .items_center()
                             .border_b_1()
-                            .border_color(BORDER)
+                            .border_color(theme.border_soft)
                             .font_weight(FontWeight::MEDIUM)
                             .child(title),
                     )
-                    .child(div().p(px(18.0)).child(body)),
+                    .child(
+                        div()
+                            .relative()
+                            .flex_1()
+                            .min_h(px(0.0))
+                            .child(
+                                div()
+                                    .id("auth-prompt-scroll")
+                                    .h_full()
+                                    .overflow_y_scroll()
+                                    .track_scroll(&self.auth_prompt_scroll)
+                                    .p(px(18.0))
+                                    .child(body),
+                            )
+                            .child(scrollbar(
+                                "auth-prompt-scrollbar",
+                                theme,
+                                self.auth_prompt_scroll.clone(),
+                            )),
+                    )
+                    .child(
+                        actions
+                            .flex_none()
+                            .p(px(18.0))
+                            .border_t_1()
+                            .border_color(theme.border_soft),
+                    ),
             )
     }
 }

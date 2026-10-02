@@ -1,7 +1,9 @@
 use super::super::*;
+use crate::scrollbar::scrollbar;
 
 impl TunnelMateApp {
     pub(crate) fn render_diagnostics(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = self.theme;
         let diagnostics = self.diagnostics.as_ref().expect("open diagnostics");
         let loading = diagnostics.steps.is_none();
         let retry_id = diagnostics.tunnel_id.clone();
@@ -9,26 +11,27 @@ impl TunnelMateApp {
         let mut steps = div()
             .id("diagnostics-scroll")
             .overflow_y_scroll()
-            .flex_1()
-            .min_h(px(0.0))
-            .p(px(22.0))
+            .track_scroll(&diagnostics.scroll)
+            .h_full()
+            .px(px(22.0))
+            .py(px(10.0))
             .flex()
-            .flex_col()
-            .gap(px(10.0));
+            .flex_col();
         if loading {
             steps = steps.child(
                 div()
                     .h(px(180.0))
+                    .flex_none()
                     .flex()
                     .flex_col()
                     .items_center()
                     .justify_center()
                     .gap(px(12.0))
-                    .text_color(MUTED)
+                    .text_color(theme.muted)
                     .child(
-                        icon("icons/activity")
+                        icon(theme, "icons/activity")
                             .size(px(28.0))
-                            .text_color(PRIMARY_HOVER),
+                            .text_color(theme.primary_hover),
                     )
                     .child(self.language.pick("正在检查连接…", "Checking connection…"))
                     .child(div().text_size(px(12.0)).child(self.language.pick(
@@ -39,30 +42,28 @@ impl TunnelMateApp {
         }
         for (index, step) in diagnostics.steps.iter().flatten().enumerate() {
             let (tone, label) = match step.status.as_str() {
-                "success" => (SUCCESS, self.language.pick("通过", "Passed")),
-                "warning" => (WARNING, self.language.pick("提示", "Notice")),
-                _ => (DANGER, self.language.pick("失败", "Failed")),
+                "success" => (theme.success, self.language.pick("通过", "Passed")),
+                "warning" => (theme.warning, self.language.pick("提示", "Notice")),
+                _ => (theme.danger, self.language.pick("失败", "Failed")),
             };
             steps = steps.child(
                 div()
                     .flex()
+                    .flex_none()
                     .gap(px(12.0))
-                    .p(px(14.0))
-                    .rounded(px(10.0))
-                    .border_1()
-                    .border_color(BORDER_SOFT)
-                    .bg(APP_BG)
+                    .py(px(14.0))
+                    .when(index > 0, |row| {
+                        row.border_t_1().border_color(theme.border_soft)
+                    })
                     .child(
                         div()
                             .size(px(26.0))
                             .flex_none()
-                            .rounded(px(8.0))
-                            .bg(SURFACE)
                             .flex()
                             .items_center()
                             .justify_center()
                             .text_size(px(12.0))
-                            .text_color(MUTED)
+                            .text_color(theme.muted)
                             .child(format!("{:02}", index + 1)),
                     )
                     .child(
@@ -80,7 +81,7 @@ impl TunnelMateApp {
                                     .child(
                                         div()
                                             .text_size(px(14.0))
-                                            .text_color(TEXT)
+                                            .text_color(theme.text)
                                             .child(step.name.clone()),
                                     )
                                     .child(
@@ -94,7 +95,7 @@ impl TunnelMateApp {
                             .child(
                                 div()
                                     .text_size(px(12.0))
-                                    .text_color(MUTED)
+                                    .text_color(theme.muted)
                                     .whitespace_normal()
                                     .line_height(relative(1.5))
                                     .child(step.message.clone()),
@@ -120,17 +121,18 @@ impl TunnelMateApp {
             };
             steps = steps.child(
                 div()
-                    .p(px(14.0))
-                    .rounded(px(10.0))
-                    .bg(glass(0xd2a85e, 0.08))
+                    .py(px(16.0))
+                    .flex_none()
+                    .border_t_1()
+                    .border_color(theme.border_soft)
                     .text_size(px(12.0))
-                    .text_color(MUTED)
+                    .text_color(theme.muted)
                     .whitespace_normal()
                     .line_height(relative(1.5))
                     .child(
                         div()
                             .mb(px(5.0))
-                            .text_color(TEXT)
+                            .text_color(theme.text)
                             .child(self.language.pick("下一步", "Next step")),
                     )
                     .child(advice),
@@ -140,18 +142,19 @@ impl TunnelMateApp {
             .flex()
             .items_center()
             .justify_center()
-            .bg(rgba(0x080c14bc))
+            .bg(theme.backdrop)
             .child(
                 div()
                     .w(px(640.0))
                     .max_w(relative(0.94))
+                    .h(px(if loading { 320.0 } else { 580.0 }))
                     .max_h(relative(0.90))
                     .flex()
                     .flex_col()
                     .rounded(px(16.0))
                     .border_1()
-                    .border_color(BORDER)
-                    .bg(SURFACE)
+                    .border_color(theme.border)
+                    .bg(theme.surface)
                     .shadow_lg()
                     .child(
                         div()
@@ -162,7 +165,7 @@ impl TunnelMateApp {
                             .items_start()
                             .justify_between()
                             .border_b_1()
-                            .border_color(BORDER_SOFT)
+                            .border_color(theme.border_soft)
                             .child(
                                 div()
                                     .flex_1()
@@ -182,7 +185,7 @@ impl TunnelMateApp {
                                     .child(
                                         div()
                                             .text_size(px(12.0))
-                                            .text_color(MUTED)
+                                            .text_color(theme.muted)
                                             .truncate()
                                             .child(format!(
                                                 "{}  ·  {}",
@@ -190,18 +193,29 @@ impl TunnelMateApp {
                                             )),
                                     ),
                             )
-                            .child(close_button("close-diagnostics").on_click(
+                            .child(close_button(theme, "close-diagnostics").on_click(
                                 cx.listener(|this, _, _, cx| this.close_diagnostics(cx)),
                             )),
                     )
-                    .child(steps)
+                    .child(
+                        div()
+                            .relative()
+                            .flex_1()
+                            .min_h(px(0.0))
+                            .child(steps)
+                            .child(scrollbar(
+                                "diagnostics-scrollbar",
+                                theme,
+                                diagnostics.scroll.clone(),
+                            )),
+                    )
                     .child(
                         div()
                             .flex_none()
                             .px(px(22.0))
                             .py(px(14.0))
                             .border_t_1()
-                            .border_color(BORDER_SOFT)
+                            .border_color(theme.border_soft)
                             .flex()
                             .items_center()
                             .gap(px(8.0))
@@ -209,6 +223,7 @@ impl TunnelMateApp {
                                 footer
                                     .child(
                                         button(
+                                            theme,
                                             "copy-diagnostics",
                                             if diagnostics.copied {
                                                 self.language.pick("已复制", "Copied")
@@ -222,6 +237,7 @@ impl TunnelMateApp {
                                     )
                                     .child(
                                         button(
+                                            theme,
                                             "edit-diagnostic-tunnel",
                                             self.language.pick("编辑连接", "Edit connection"),
                                         )
@@ -237,6 +253,7 @@ impl TunnelMateApp {
                             .when(!loading, |footer| {
                                 footer.child(
                                     primary_button(
+                                        theme,
                                         "retry-diagnostics",
                                         self.language.pick("重新检查", "Check again"),
                                     )
@@ -250,6 +267,7 @@ impl TunnelMateApp {
                             .when(loading, |footer| {
                                 footer.child(
                                     button(
+                                        theme,
                                         "cancel-diagnostics",
                                         self.language.pick("取消检查", "Cancel check"),
                                     )

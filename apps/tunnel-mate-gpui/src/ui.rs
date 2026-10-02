@@ -12,11 +12,7 @@ impl gpui::AssetSource for Assets {
             "icons/settings" => "<path d='M4 6h16M4 12h16M4 18h16'/><circle cx='8' cy='6' r='2' fill='black'/><circle cx='16' cy='12' r='2' fill='black'/><circle cx='10' cy='18' r='2' fill='black'/>",
             "icons/plus" => "<path d='M12 5v14M5 12h14'/>",
             "icons/close" => "<path d='m6 6 12 12M18 6 6 18'/>",
-            "icons/arrow" => "<path d='M4 12h16m-6-6 6 6-6 6'/>",
-            "icons/globe" => "<circle cx='12' cy='12' r='9'/><ellipse cx='12' cy='12' rx='4' ry='9'/><path d='M3 12h18'/>",
             "icons/check" => "<path d='m5 12 4 4L19 6'/>",
-            "icons/copy" => "<rect x='8' y='8' width='12' height='13' rx='2'/><path d='M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h3'/>",
-            "icons/chevron" => "<path d='m9 5 7 7-7 7'/>",
             _ => return Ok(None),
         };
         Ok(Some(Cow::Owned(format!("<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'>{drawing}</svg>").into_bytes())))
@@ -27,16 +23,17 @@ impl gpui::AssetSource for Assets {
     }
 }
 
-pub(crate) fn icon(path: &'static str) -> gpui::Svg {
+pub(crate) fn icon(theme: Theme, path: &'static str) -> gpui::Svg {
     gpui::svg()
         .path(path)
         .size(px(16.0))
         .flex_none()
-        .text_color(TEXT)
+        .text_color(theme.text)
 }
 
 /// Shared button treatment and keyboard activation (Enter / Space).
 fn button_base(
+    theme: Theme,
     id: impl Into<gpui::ElementId>,
     label: impl Into<SharedString>,
 ) -> gpui::Stateful<gpui::Div> {
@@ -56,57 +53,63 @@ fn button_base(
         .gap(px(7.0))
         .rounded(px(8.0))
         .border_1()
-        .border_color(BORDER)
-        .bg(SURFACE)
+        .border_color(theme.border)
+        .bg(theme.surface)
         .text_size(px(12.0))
-        .text_color(TEXT)
+        .text_color(theme.text)
         .cursor_pointer()
         .child(label)
 }
 
 pub(crate) fn button(
+    theme: Theme,
     id: impl Into<gpui::ElementId>,
     label: impl Into<SharedString>,
 ) -> gpui::Stateful<gpui::Div> {
-    button_base(id, label)
-        .hover(|style| style.bg(SURFACE_HOVER).border_color(MUTED_DARK))
-        .focus(|style| style.border_color(PRIMARY))
+    button_base(theme, id, label)
+        .hover(|style| style.bg(theme.surface_hover).border_color(theme.muted_dark))
+        .focus(|style| style.border_color(theme.primary))
 }
 
 pub(crate) fn primary_button(
+    theme: Theme,
     id: impl Into<gpui::ElementId>,
     label: impl Into<SharedString>,
 ) -> gpui::Stateful<gpui::Div> {
-    button_base(id, label)
-        .bg(PRIMARY)
-        .border_color(PRIMARY)
-        .text_color(PRIMARY_TEXT)
+    button_base(theme, id, label)
+        .bg(theme.primary)
+        .border_color(theme.primary)
+        .text_color(theme.primary_text)
         .font_weight(FontWeight::MEDIUM)
-        .hover(|style| style.bg(PRIMARY_HOVER).border_color(PRIMARY_HOVER))
-        .focus(|style| style.border_color(TEXT))
+        .hover(|style| {
+            style
+                .bg(theme.primary_hover)
+                .border_color(theme.primary_hover)
+        })
+        .focus(|style| style.border_color(theme.text))
 }
 
-pub(crate) fn close_button(id: &'static str) -> gpui::Stateful<gpui::Div> {
-    button(id, "")
+pub(crate) fn close_button(theme: Theme, id: &'static str) -> gpui::Stateful<gpui::Div> {
+    button(theme, id, "")
         .aria_label("Close")
         .tab_index(100)
         .size(px(32.0))
         .px(px(0.0))
         .border_color(rgba(0x00000000))
         .bg(rgba(0x00000000))
-        .text_color(MUTED)
-        .child(icon("icons/close"))
+        .text_color(theme.muted)
+        .child(icon(theme, "icons/close"))
 }
 
-pub(crate) fn section_heading(title: impl Into<SharedString>) -> gpui::Div {
+pub(crate) fn section_heading(theme: Theme, title: impl Into<SharedString>) -> gpui::Div {
     div()
         .text_size(px(12.0))
         .font_weight(FontWeight::MEDIUM)
-        .text_color(MUTED)
+        .text_color(theme.muted)
         .child(title.into())
 }
 
-pub(crate) fn toggle(id: &'static str, checked: bool) -> gpui::Stateful<gpui::Div> {
+pub(crate) fn toggle(theme: Theme, id: &'static str, checked: bool) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .key_context("TunnelButton")
@@ -117,15 +120,19 @@ pub(crate) fn toggle(id: &'static str, checked: bool) -> gpui::Stateful<gpui::Di
         .p(px(3.0))
         .rounded(px(13.0))
         .border_1()
-        .border_color(if checked { PRIMARY } else { BORDER })
-        .bg(if checked { PRIMARY } else { color(0x354154) })
+        .border_color(if checked { theme.primary } else { theme.border })
+        .bg(if checked {
+            theme.primary
+        } else {
+            theme.toggle_off
+        })
         .cursor_pointer()
-        .focus(|style| style.border_color(TEXT))
+        .focus(|style| style.border_color(theme.text))
         .child(
             div()
                 .size(px(18.0))
                 .rounded(px(9.0))
-                .bg(PRIMARY_TEXT)
+                .bg(theme.primary_text)
                 .when(checked, |dot| dot.ml(px(15.0))),
         )
 }

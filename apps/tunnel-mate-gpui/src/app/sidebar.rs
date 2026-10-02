@@ -73,6 +73,7 @@ impl TunnelMateApp {
         filter: TunnelFilter,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let theme = self.theme;
         let selected = self.filter == filter;
         let (glyph, id) = match &filter {
             TunnelFilter::All => ("icons/tunnels", "nav-all".to_string()),
@@ -82,6 +83,7 @@ impl TunnelMateApp {
         };
         div()
             .id(SharedString::from(id))
+            .mx(px(12.0))
             .key_context("TunnelButton")
             .tab_index(0)
             .h(px(42.0))
@@ -93,22 +95,22 @@ impl TunnelMateApp {
             .rounded(px(9.0))
             .border_1()
             .border_color(if selected {
-                color(0x345786)
+                theme.selected_border
             } else {
                 rgba(0x00000000)
             })
             .bg(if selected {
-                color(0x203656)
+                theme.selected
             } else {
                 rgba(0x00000000)
             })
             .text_size(px(13.0))
-            .text_color(if selected { TEXT } else { MUTED })
+            .text_color(if selected { theme.text } else { theme.muted })
             .cursor_pointer()
-            .hover(|style| style.bg(SURFACE_HOVER))
-            .focus(|style| style.border_color(PRIMARY_HOVER))
+            .hover(|style| style.bg(theme.surface_hover))
+            .focus(|style| style.border_color(theme.primary_hover))
             .on_click(cx.listener(move |this, _, _, cx| this.set_filter(filter.clone(), cx)))
-            .child(icon(glyph))
+            .child(icon(theme, glyph))
             .child(div().flex_1().min_w_0().truncate().child(label.into()))
             .when_some(count, |item, count| {
                 item.child(
@@ -118,9 +120,9 @@ impl TunnelMateApp {
                         .text_center()
                         .text_size(px(12.0))
                         .text_color(if selected {
-                            color(0xb4d1ff)
+                            theme.accent
                         } else {
-                            MUTED_DARK
+                            theme.muted_dark
                         })
                         .child(count.to_string()),
                 )
@@ -128,6 +130,7 @@ impl TunnelMateApp {
     }
 
     pub(super) fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = self.theme;
         let total = self.config.tunnels.len();
         let active = self
             .config
@@ -137,8 +140,9 @@ impl TunnelMateApp {
             .count();
         let mut groups = div()
             .id("sidebar-groups")
+            .track_scroll(&self.groups_scroll)
             .overflow_y_scroll()
-            .flex_1()
+            .h_full()
             .min_h(px(0.0))
             .flex()
             .flex_col()
@@ -161,18 +165,17 @@ impl TunnelMateApp {
             .w(px(212.0))
             .flex_none()
             .h_full()
-            .px(px(12.0))
             .pb(px(14.0))
             .flex()
             .flex_col()
             .border_r_1()
-            .border_color(BORDER_SOFT)
-            .bg(SIDEBAR_BG)
+            .border_color(theme.border_soft)
+            .bg(theme.sidebar_bg)
             .child(
                 div()
                     .h(px(96.0))
                     .flex_none()
-                    .px(px(9.0))
+                    .px(px(21.0))
                     .flex()
                     .items_center()
                     .gap(px(11.0))
@@ -191,7 +194,7 @@ impl TunnelMateApp {
                             .child(
                                 div()
                                     .text_size(px(11.0))
-                                    .text_color(MUTED)
+                                    .text_color(theme.muted)
                                     .child(self.language.pick("SSH 隧道管理", "SSH connections")),
                             ),
                     ),
@@ -218,34 +221,46 @@ impl TunnelMateApp {
                 div()
                     .mt(px(26.0))
                     .mb(px(8.0))
-                    .px(px(12.0))
+                    .px(px(24.0))
                     .flex_none()
                     .flex()
                     .items_center()
                     .justify_between()
-                    .child(section_heading(self.language.pick("分组", "Groups")))
+                    .child(section_heading(theme, self.language.pick("分组", "Groups")))
                     .child(
-                        button("add-group", "")
+                        button(theme, "add-group", "")
                             .size(px(28.0))
                             .px(px(0.0))
                             .bg(rgba(0x00000000))
                             .border_color(rgba(0x00000000))
-                            .child(icon("icons/plus"))
+                            .child(icon(theme, "icons/plus"))
                             .on_click(cx.listener(|this, _, _, cx| this.open_group_form(cx))),
                     ),
             )
-            .child(groups)
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .child(groups)
+                    .child(crate::scrollbar::scrollbar(
+                        "groups-scrollbar",
+                        theme,
+                        self.groups_scroll.clone(),
+                    )),
+            )
             .child(
                 div()
                     .h(px(1.0))
                     .flex_none()
                     .mx(px(8.0))
                     .my(px(12.0))
-                    .bg(BORDER_SOFT),
+                    .bg(theme.border_soft),
             )
             .child(
                 div()
                     .id("open-settings")
+                    .mx(px(12.0))
                     .key_context("TunnelButton")
                     .tab_index(0)
                     .h(px(42.0))
@@ -258,12 +273,12 @@ impl TunnelMateApp {
                     .border_1()
                     .border_color(rgba(0x00000000))
                     .text_size(px(13.0))
-                    .text_color(MUTED)
+                    .text_color(theme.muted)
                     .cursor_pointer()
-                    .hover(|style| style.bg(SURFACE_HOVER))
-                    .focus(|style| style.border_color(PRIMARY_HOVER))
+                    .hover(|style| style.bg(theme.surface_hover))
+                    .focus(|style| style.border_color(theme.primary_hover))
                     .on_click(cx.listener(|this, _, _, cx| this.open_settings(cx)))
-                    .child(icon("icons/settings"))
+                    .child(icon(theme, "icons/settings"))
                     .child(self.language.pick("设置", "Settings")),
             )
     }
@@ -273,15 +288,18 @@ impl TunnelMateApp {
         tunnel: &Tunnel,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let theme = self.theme;
         let selected = self.selected_tunnel.as_deref() == Some(tunnel.id.as_str());
         let status = self.status(&tunnel.id);
         let running = self.is_active(&tunnel.id);
         let (tone, status_label) = match status {
-            TunnelStatus::Running => (SUCCESS, self.language.pick("已连接", "Connected")),
-            TunnelStatus::Connecting => (WARNING, self.language.pick("连接中", "Connecting")),
-            TunnelStatus::Reconnecting => (WARNING, self.language.pick("重连中", "Reconnecting")),
-            TunnelStatus::Failed => (DANGER, self.language.pick("连接失败", "Failed")),
-            TunnelStatus::Stopped => (MUTED, self.language.pick("未连接", "Offline")),
+            TunnelStatus::Running => (theme.success, self.language.pick("已连接", "Connected")),
+            TunnelStatus::Connecting => (theme.warning, self.language.pick("连接中", "Connecting")),
+            TunnelStatus::Reconnecting => {
+                (theme.warning, self.language.pick("重连中", "Reconnecting"))
+            }
+            TunnelStatus::Failed => (theme.danger, self.language.pick("连接失败", "Failed")),
+            TunnelStatus::Stopped => (theme.muted, self.language.pick("未连接", "Offline")),
         };
         let kind = match tunnel.forward {
             ForwardSpec::Local { .. } => self.language.pick("本地", "Local"),
@@ -308,160 +326,169 @@ impl TunnelMateApp {
             TunnelStatus::Failed => self.language.pick("重试", "Retry"),
             TunnelStatus::Stopped => self.language.pick("连接", "Connect"),
         };
-        div().h(px(100.0)).w_full().pb(px(8.0)).child(
-            div()
-                .h_full()
-                .w_full()
-                .flex()
-                .items_center()
-                .gap(px(16.0))
-                .px(px(16.0))
-                .py(px(12.0))
-                .rounded(px(12.0))
-                .border_1()
-                .border_color(if selected {
-                    color(0x43699b)
-                } else {
-                    BORDER_SOFT
-                })
-                .bg(if selected { color(0x1c2d46) } else { SURFACE })
-                .cursor_pointer()
-                .hover(|style| style.bg(SURFACE_HOVER))
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(move |this, _, _, cx| this.select_tunnel(select_id.clone(), cx)),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .gap(px(5.0))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(8.0))
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .truncate()
-                                        .text_size(px(15.0))
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .child(tunnel.name.clone()),
+        div()
+            .h(px(100.0))
+            .w_full()
+            .flex()
+            .items_center()
+            .gap(px(16.0))
+            .px(px(24.0))
+            .py(px(14.0))
+            .border_b_1()
+            .border_color(theme.border_soft)
+            .bg(if selected {
+                theme.selected
+            } else {
+                theme.app_bg
+            })
+            .cursor_pointer()
+            .hover(|style| style.bg(theme.surface_hover))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| this.select_tunnel(select_id.clone(), cx)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(5.0))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(15.0))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(tunnel.name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .text_size(px(11.0))
+                                    .text_color(theme.muted)
+                                    .child(kind),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .truncate()
+                            .text_size(px(12.0))
+                            .text_color(theme.text)
+                            .child(Self::route(tunnel)),
+                    )
+                    .child(
+                        div()
+                            .truncate()
+                            .text_size(px(12.0))
+                            .text_color(theme.muted)
+                            .child(host),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .items_end()
+                    .gap(px(10.0))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.0))
+                            .text_size(px(12.0))
+                            .text_color(tone)
+                            .child(div().size(px(6.0)).rounded(px(3.0)).bg(tone))
+                            .child(status_label),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(6.0))
+                            .child(
+                                button(
+                                    theme,
+                                    SharedString::from(format!("diagnose-{}", tunnel.id)),
+                                    self.language.pick("诊断", "Diagnose"),
                                 )
-                                .child(
-                                    div()
-                                        .flex_none()
-                                        .px(px(7.0))
-                                        .py(px(2.0))
-                                        .rounded(px(5.0))
-                                        .bg(APP_BG)
-                                        .text_size(px(11.0))
-                                        .text_color(MUTED)
-                                        .child(kind),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .truncate()
-                                .text_size(px(12.0))
-                                .text_color(TEXT)
-                                .child(Self::route(tunnel)),
-                        )
-                        .child(
-                            div()
-                                .truncate()
-                                .text_size(px(12.0))
-                                .text_color(MUTED)
-                                .child(host),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex_none()
-                        .flex()
-                        .flex_col()
-                        .items_end()
-                        .gap(px(10.0))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(6.0))
-                                .text_size(px(12.0))
-                                .text_color(tone)
-                                .child(div().size(px(6.0)).rounded(px(3.0)).bg(tone))
-                                .child(status_label),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .gap(px(6.0))
-                                .child(
-                                    button(
-                                        SharedString::from(format!("diagnose-{}", tunnel.id)),
-                                        self.language.pick("诊断", "Diagnose"),
-                                    )
-                                    .h(px(30.0))
-                                    .px(px(9.0))
-                                    .bg(rgba(0x00000000))
-                                    .border_color(BORDER_SOFT)
-                                    .text_color(MUTED)
-                                    .on_click(cx.listener(
-                                        move |this, _, _, cx| {
-                                            cx.stop_propagation();
-                                            this.run_tunnel_diagnostics(diagnose_id.clone(), cx);
-                                        },
-                                    )),
+                                .h(px(30.0))
+                                .px(px(9.0))
+                                .bg(rgba(0x00000000))
+                                .border_color(theme.border_soft)
+                                .text_color(theme.muted)
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.run_tunnel_diagnostics(diagnose_id.clone(), cx);
+                                    },
+                                )),
+                            )
+                            .child(
+                                button(
+                                    theme,
+                                    SharedString::from(format!("edit-{}", tunnel.id)),
+                                    self.language.pick("编辑", "Edit"),
                                 )
-                                .child(
-                                    button(
-                                        SharedString::from(format!("edit-{}", tunnel.id)),
-                                        self.language.pick("编辑", "Edit"),
-                                    )
-                                    .h(px(30.0))
-                                    .px(px(9.0))
-                                    .bg(rgba(0x00000000))
-                                    .border_color(BORDER_SOFT)
-                                    .text_color(MUTED)
-                                    .on_click(cx.listener(
-                                        move |this, _, _, cx| {
-                                            cx.stop_propagation();
-                                            this.edit_tunnel(edit_id.clone(), cx);
-                                        },
-                                    )),
+                                .h(px(30.0))
+                                .px(px(9.0))
+                                .bg(rgba(0x00000000))
+                                .border_color(theme.border_soft)
+                                .text_color(theme.muted)
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.edit_tunnel(edit_id.clone(), cx);
+                                    },
+                                )),
+                            )
+                            .child(
+                                button(
+                                    theme,
+                                    SharedString::from(format!("toggle-{}", tunnel.id)),
+                                    connect_label,
                                 )
-                                .child(
-                                    button(
-                                        SharedString::from(format!("toggle-{}", tunnel.id)),
-                                        connect_label,
-                                    )
-                                    .h(px(30.0))
-                                    .min_w(px(56.0))
-                                    .px(px(10.0))
-                                    .bg(if running { SURFACE } else { PRIMARY })
-                                    .border_color(if running { BORDER } else { PRIMARY })
-                                    .text_color(if running { TEXT } else { PRIMARY_TEXT })
-                                    .on_click(cx.listener(
-                                        move |this, _, _, cx| {
-                                            cx.stop_propagation();
-                                            this.request_toggle(toggle_id.clone(), cx);
-                                        },
-                                    )),
-                                ),
-                        ),
-                ),
-        )
+                                .h(px(30.0))
+                                .min_w(px(56.0))
+                                .px(px(10.0))
+                                .bg(if running {
+                                    theme.surface
+                                } else {
+                                    theme.primary
+                                })
+                                .border_color(if running { theme.border } else { theme.primary })
+                                .text_color(if running {
+                                    theme.text
+                                } else {
+                                    theme.primary_text
+                                })
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.request_toggle(toggle_id.clone(), cx);
+                                    },
+                                )),
+                            ),
+                    ),
+            )
     }
 
-    pub(super) fn form_field(label: &'static str, input: Entity<TextInput>) -> impl IntoElement {
-        Self::form_field_with_requirement(label, input, false)
+    pub(super) fn form_field(
+        theme: Theme,
+        label: &'static str,
+        input: Entity<TextInput>,
+    ) -> impl IntoElement {
+        Self::form_field_with_requirement(theme, label, input, false)
     }
 
     pub(super) fn disclosure_chevron(
+        theme: Theme,
         expanded: bool,
         expanded_glyph: &'static str,
         collapsed_glyph: &'static str,
@@ -474,7 +501,7 @@ impl TunnelMateApp {
             .justify_center()
             .text_size(px(16.0))
             .line_height(relative(1.0))
-            .text_color(MUTED)
+            .text_color(theme.muted)
             .child(if expanded {
                 expanded_glyph
             } else {
@@ -483,13 +510,15 @@ impl TunnelMateApp {
     }
 
     pub(super) fn required_form_field(
+        theme: Theme,
         label: &'static str,
         input: Entity<TextInput>,
     ) -> impl IntoElement {
-        Self::form_field_with_requirement(label, input, true)
+        Self::form_field_with_requirement(theme, label, input, true)
     }
 
     fn form_field_with_requirement(
+        theme: Theme,
         label: &'static str,
         input: Entity<TextInput>,
         required: bool,
@@ -504,10 +533,10 @@ impl TunnelMateApp {
                     .items_center()
                     .gap(px(3.0))
                     .text_size(px(12.0))
-                    .text_color(MUTED)
+                    .text_color(theme.muted)
                     .child(label)
                     .when(required, |label| {
-                        label.child(div().text_color(DANGER).child("*"))
+                        label.child(div().text_color(theme.danger).child("*"))
                     }),
             )
             .child(input)

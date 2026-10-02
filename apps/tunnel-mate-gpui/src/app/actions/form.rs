@@ -58,47 +58,48 @@ impl TunnelMateApp {
     }
 
     pub(crate) fn open_group_form(&mut self, cx: &mut Context<Self>) {
-        let name_placeholder = self.language.pick("例如：生产环境", "e.g. Production");
-        let description_placeholder = self.language.pick("说明（可选）", "Description (optional)");
-        self.group_form = Some(GroupForm {
-            validation_error: None,
-            editing_id: None,
-            name: cx.new(|cx| TextInput::new(cx, name_placeholder, "")),
-            description: cx.new(|cx| TextInput::new(cx, description_placeholder, "")),
-        });
-        let name = self.group_form.as_ref().unwrap().name.clone();
-        cx.subscribe(&name, |this, _, _: &text_input::InputChanged, cx| {
-            if let Some(form) = &mut this.group_form {
-                form.validation_error = None;
-            }
-            cx.notify();
-        })
-        .detach();
-        cx.notify();
+        self.show_group_form(None, cx);
     }
 
     pub(crate) fn edit_current_group(&mut self, cx: &mut Context<Self>) {
         let TunnelFilter::Group(id) = &self.filter else {
             return;
         };
-        let Some(group) = self.config.groups.iter().find(|group| &group.id == id) else {
+        let Some(group) = self
+            .config
+            .groups
+            .iter()
+            .find(|group| &group.id == id)
+            .cloned()
+        else {
             return;
         };
+        self.show_group_form(Some(group), cx);
+    }
+
+    fn show_group_form(&mut self, group: Option<Group>, cx: &mut Context<Self>) {
         let name_placeholder = self.language.pick("分组名称", "Group name");
         let description_placeholder = self.language.pick("说明（可选）", "Description (optional)");
-        self.group_form = Some(GroupForm {
-            validation_error: None,
-            editing_id: Some(group.id.clone()),
-            name: cx.new(|cx| TextInput::new(cx, name_placeholder, group.name.clone())),
-            description: cx.new(|cx| {
-                TextInput::new(
-                    cx,
-                    description_placeholder,
-                    group.description.clone().unwrap_or_default(),
-                )
-            }),
+        let name = cx.new(|cx| {
+            TextInput::new(
+                cx,
+                name_placeholder,
+                group
+                    .as_ref()
+                    .map(|group| group.name.clone())
+                    .unwrap_or_default(),
+            )
         });
-        let name = self.group_form.as_ref().unwrap().name.clone();
+        let description = cx.new(|cx| {
+            TextInput::new(
+                cx,
+                description_placeholder,
+                group
+                    .as_ref()
+                    .and_then(|group| group.description.clone())
+                    .unwrap_or_default(),
+            )
+        });
         cx.subscribe(&name, |this, _, _: &text_input::InputChanged, cx| {
             if let Some(form) = &mut this.group_form {
                 form.validation_error = None;
@@ -106,6 +107,12 @@ impl TunnelMateApp {
             cx.notify();
         })
         .detach();
+        self.group_form = Some(GroupForm {
+            validation_error: None,
+            editing_id: group.map(|group| group.id),
+            name,
+            description,
+        });
         cx.notify();
     }
 
@@ -293,7 +300,11 @@ impl TunnelMateApp {
         self.notice_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(Duration::from_secs(4)).await;
             let _ = this.update(cx, |this, cx| {
-                if notice_is_current(this.notice.as_ref().map(|notice| notice.id), notice_id) {
+                if this
+                    .notice
+                    .as_ref()
+                    .is_some_and(|notice| notice.id == notice_id)
+                {
                     this.notice = None;
                     cx.notify();
                 }
@@ -308,40 +319,33 @@ impl TunnelMateApp {
             return;
         };
         let target = form.ssh_picker_target.unwrap_or(SshPickerTarget::Primary);
-        let resolved_host = host.host_name.unwrap_or(host.host);
-        match target {
-            SshPickerTarget::Primary => {
-                form.ssh_host
-                    .update(cx, |input, cx| input.set_value(resolved_host, cx));
-                if let Some(port) = host.port {
-                    form.ssh_port
-                        .update(cx, |input, cx| input.set_value(port.to_string(), cx));
-                }
-                if let Some(user) = host.user {
-                    form.ssh_user
-                        .update(cx, |input, cx| input.set_value(user, cx));
-                }
-                if let Some(path) = host.identity_file {
-                    form.identity_file
-                        .update(cx, |input, cx| input.set_value(path, cx));
-                }
-            }
+        let (host_input, port_input, user_input, identity_input) = match target {
+            SshPickerTarget::Primary => (
+                &form.ssh_host,
+                &form.ssh_port,
+                &form.ssh_user,
+                &form.identity_file,
+            ),
             SshPickerTarget::JumpHost => {
                 form.jump_host_id = None;
-                form.jump_host
-                    .update(cx, |input, cx| input.set_value(resolved_host, cx));
-                if let Some(port) = host.port {
-                    form.jump_port
-                        .update(cx, |input, cx| input.set_value(port.to_string(), cx));
-                }
-                if let Some(user) = host.user {
-                    form.jump_user
-                        .update(cx, |input, cx| input.set_value(user, cx));
-                }
-                if let Some(path) = host.identity_file {
-                    form.jump_identity_file
-                        .update(cx, |input, cx| input.set_value(path, cx));
-                }
+                (
+                    &form.jump_host,
+                    &form.jump_port,
+                    &form.jump_user,
+                    &form.jump_identity_file,
+                )
+            }
+        };
+        host_input.update(cx, |input, cx| {
+            input.set_value(host.host_name.unwrap_or(host.host), cx)
+        });
+        for (input, value) in [
+            (port_input, host.port.map(|port| port.to_string())),
+            (user_input, host.user),
+            (identity_input, host.identity_file),
+        ] {
+            if let Some(value) = value {
+                input.update(cx, |input, cx| input.set_value(value, cx));
             }
         }
         form.ssh_picker_target = None;

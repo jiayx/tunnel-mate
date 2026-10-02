@@ -1,7 +1,9 @@
 use super::super::*;
+use crate::scrollbar::scrollbar;
 
 impl TunnelMateApp {
     pub(crate) fn render_notice(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = self.theme;
         div()
             .absolute()
             .right(px(18.0))
@@ -14,12 +16,12 @@ impl TunnelMateApp {
             .gap(px(10.0))
             .rounded(px(9.0))
             .border_1()
-            .border_color(BORDER)
-            .bg(color(0x171d27))
+            .border_color(theme.border)
+            .bg(theme.surface)
             .shadow_lg()
             .text_size(px(12.0))
-            .text_color(TEXT)
-            .child(div().size(px(7.0)).rounded(px(4.0)).bg(PRIMARY))
+            .text_color(theme.text)
+            .child(div().size(px(7.0)).rounded(px(4.0)).bg(theme.primary))
             .child(
                 div().flex_grow(1.0).min_w_0().whitespace_normal().child(
                     self.notice
@@ -29,25 +31,15 @@ impl TunnelMateApp {
                 ),
             )
             .child(
-                div()
+                close_button(theme, "dismiss_notice")
                     .size(px(24.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(6.0))
-                    .text_color(MUTED)
-                    .cursor_pointer()
-                    .hover(|style| style.bg(SURFACE_HOVER).text_color(TEXT))
-                    .id("dismiss_notice")
-                    .key_context("TunnelButton")
                     .tab_index(0)
-                    .focus(|style| style.border_color(PRIMARY_HOVER))
-                    .on_click(cx.listener(|this, _, _, cx| this.dismiss_notice(cx)))
-                    .child("×"),
+                    .on_click(cx.listener(|this, _, _, cx| this.dismiss_notice(cx))),
             )
     }
 
     pub(crate) fn render_ssh_host_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = self.theme;
         let form = self.form.as_ref().expect("open tunnel form");
         let picker_target = form.ssh_picker_target.unwrap_or(SshPickerTarget::Primary);
         let (title, description) = match picker_target {
@@ -83,10 +75,10 @@ impl TunnelMateApp {
             .id("ssh-host-picker-scroll")
             .flex()
             .flex_col()
-            .gap(px(7.0))
-            .max_h(px(410.0))
+            .track_scroll(&form.ssh_picker_scroll)
+            .h_full()
             .overflow_y_scroll()
-            .p(px(14.0));
+            .py(px(6.0));
 
         if form.ssh_hosts.is_empty() {
             hosts = hosts.child(
@@ -97,11 +89,7 @@ impl TunnelMateApp {
                     .items_center()
                     .justify_center()
                     .gap(px(7.0))
-                    .rounded(px(9.0))
-                    .border_1()
-                    .border_color(BORDER)
-                    .text_color(MUTED)
-                    .child(div().text_size(px(20.0)).child("⌁"))
+                    .text_color(theme.muted)
                     .child(
                         div().text_size(px(12.0)).child(
                             self.language
@@ -131,49 +119,31 @@ impl TunnelMateApp {
                 hosts = hosts.child(
                     div()
                         .id(("ssh-host-option", index))
+                        .role(gpui::Role::Button)
+                        .aria_label(host.host.clone())
+                        .flex_none()
                         .key_context("TunnelButton")
                         .tab_index(0)
-                        .focus(|style| style.border_color(PRIMARY_HOVER))
-                        .px(px(12.0))
-                        .py(px(10.0))
+                        .focus(|style| style.border_color(theme.primary_hover))
+                        .px(px(18.0))
+                        .py(px(12.0))
                         .flex()
                         .items_center()
                         .gap(px(11.0))
-                        .rounded(px(9.0))
-                        .border_1()
+                        .border_l_2()
                         .border_color(if selected {
-                            glass(0x075bea, 0.52)
+                            theme.primary
                         } else {
-                            BORDER
+                            theme.surface
                         })
                         .bg(if selected {
-                            glass(0x075bea, 0.18)
+                            theme.selected
                         } else {
-                            APP_BG
+                            theme.surface
                         })
                         .cursor_pointer()
-                        .hover(move |style| {
-                            style
-                                .bg(if selected {
-                                    glass(0x075bea, 0.18)
-                                } else {
-                                    glass(0x075bea, 0.10)
-                                })
-                                .border_color(glass(0x075bea, 0.42))
-                        })
+                        .hover(move |style| style.bg(theme.surface_hover))
                         .on_click(cx.listener(move |this, _, _, cx| this.apply_ssh_host(index, cx)))
-                        .child(
-                            div()
-                                .size(px(32.0))
-                                .flex_none()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded(px(8.0))
-                                .bg(glass(0x075bea, if selected { 0.28 } else { 0.16 }))
-                                .text_color(PRIMARY)
-                                .child("⌁"),
-                        )
                         .child(
                             div()
                                 .flex()
@@ -183,30 +153,34 @@ impl TunnelMateApp {
                                 .gap(px(3.0))
                                 .child(
                                     div()
-                                        .text_size(px(12.0))
+                                        .text_size(px(13.0))
+                                        .truncate()
                                         .font_weight(FontWeight::MEDIUM)
-                                        .text_color(TEXT)
+                                        .text_color(theme.text)
                                         .child(host.host.clone()),
                                 )
-                                .child(div().text_size(px(12.0)).text_color(MUTED).child(endpoint)),
+                                .child(
+                                    div()
+                                        .text_size(px(12.0))
+                                        .text_color(theme.muted)
+                                        .truncate()
+                                        .child(endpoint),
+                                )
+                                .when_some(identity, |column, identity| {
+                                    column.child(
+                                        div()
+                                            .text_size(px(12.0))
+                                            .text_color(theme.muted)
+                                            .truncate()
+                                            .child(identity),
+                                    )
+                                }),
                         )
-                        .when_some(identity, |row, identity| {
-                            row.child(
-                                div()
-                                    .px(px(7.0))
-                                    .py(px(4.0))
-                                    .rounded(px(5.0))
-                                    .bg(SURFACE)
-                                    .text_size(px(12.0))
-                                    .text_color(MUTED)
-                                    .child(identity),
-                            )
-                        })
                         .child(
                             div()
                                 .w(px(24.0))
                                 .text_center()
-                                .text_color(PRIMARY)
+                                .text_color(theme.primary)
                                 .child(if selected { "✓" } else { "›" }),
                         ),
                 );
@@ -217,28 +191,39 @@ impl TunnelMateApp {
             .flex()
             .items_center()
             .justify_center()
-            .bg(rgba(0x080a0dd4))
+            .bg(theme.backdrop)
             .child(
                 div()
                     .w(px(520.0))
-                    .max_h(px(520.0))
+                    .max_w(relative(0.94))
+                    .h(px(if form.ssh_hosts.is_empty() {
+                        240.0
+                    } else {
+                        500.0
+                    }))
+                    .max_h(relative(0.90))
+                    .flex()
+                    .flex_col()
                     .rounded(px(14.0))
                     .border_1()
-                    .border_color(BORDER)
-                    .bg(SURFACE)
+                    .border_color(theme.border)
+                    .bg(theme.surface)
                     .shadow_lg()
                     .overflow_hidden()
                     .child(
                         div()
-                            .h(px(62.0))
+                            .h(px(70.0))
+                            .flex_none()
                             .px(px(16.0))
                             .flex()
                             .items_center()
                             .justify_between()
                             .border_b_1()
-                            .border_color(BORDER)
+                            .border_color(theme.border)
                             .child(
                                 div()
+                                    .flex_1()
+                                    .min_w_0()
                                     .flex()
                                     .flex_col()
                                     .gap(px(3.0))
@@ -246,31 +231,28 @@ impl TunnelMateApp {
                                     .child(
                                         div()
                                             .text_size(px(12.0))
-                                            .text_color(MUTED)
+                                            .text_color(theme.muted)
                                             .child(description),
                                     ),
                             )
                             .child(
-                                div()
-                                    .size(px(30.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded(px(7.0))
-                                    .text_color(MUTED)
-                                    .cursor_pointer()
-                                    .hover(|style| style.bg(SURFACE_HOVER).text_color(TEXT))
-                                    .id("close_ssh_hosts")
-                                    .key_context("TunnelButton")
-                                    .tab_index(100)
-                                    .focus(|style| style.border_color(PRIMARY_HOVER))
-                                    .on_click(
-                                        cx.listener(|this, _, _, cx| this.close_ssh_hosts(cx)),
-                                    )
-                                    .child("×"),
+                                close_button(theme, "close_ssh_hosts").on_click(
+                                    cx.listener(|this, _, _, cx| this.close_ssh_hosts(cx)),
+                                ),
                             ),
                     )
-                    .child(hosts),
+                    .child(
+                        div()
+                            .relative()
+                            .flex_1()
+                            .min_h(px(0.0))
+                            .child(hosts)
+                            .child(scrollbar(
+                                "ssh-host-picker-scrollbar",
+                                theme,
+                                form.ssh_picker_scroll.clone(),
+                            )),
+                    ),
             )
     }
 }

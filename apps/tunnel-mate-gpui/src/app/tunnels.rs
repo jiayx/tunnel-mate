@@ -138,27 +138,21 @@ impl TunnelMateApp {
                 port: parse_port(&form.listen_port, language.pick("监听端口", "Listen port"))?,
             };
             let forward = match form.kind {
-                ForwardKind::Local => ForwardSpec::Local {
-                    listen,
-                    target: Endpoint {
-                        host: form.target_host.read(cx).value(),
-                        port: parse_port(
-                            &form.target_port,
-                            language.pick("目标端口", "Target port"),
-                        )?,
-                    },
-                },
-                ForwardKind::Remote => ForwardSpec::Remote {
-                    listen,
-                    target: Endpoint {
-                        host: form.target_host.read(cx).value(),
-                        port: parse_port(
-                            &form.target_port,
-                            language.pick("目标端口", "Target port"),
-                        )?,
-                    },
-                },
                 ForwardKind::Socks5 => ForwardSpec::Socks5 { listen },
+                kind => {
+                    let target = Endpoint {
+                        host: form.target_host.read(cx).value(),
+                        port: parse_port(
+                            &form.target_port,
+                            language.pick("目标端口", "Target port"),
+                        )?,
+                    };
+                    if kind == ForwardKind::Local {
+                        ForwardSpec::Local { listen, target }
+                    } else {
+                        ForwardSpec::Remote { listen, target }
+                    }
+                }
             };
             let id = form
                 .editing_id
@@ -169,7 +163,6 @@ impl TunnelMateApp {
             let ssh_password = form.ssh_password.read(cx).value();
             let jump_identity = form.jump_identity_file.read(cx).value();
             let jump_password = form.jump_password.read(cx).value();
-            let manual_jump = form.jump_enabled && form.jump_host_id.is_none();
             let jump_port = if manual_jump {
                 Some(parse_port(
                     &form.jump_port,
@@ -194,7 +187,7 @@ impl TunnelMateApp {
                     .then(|| form.jump_host_id.clone())
                     .flatten(),
                 jump_host: manual_jump.then(|| form.jump_host.read(cx).value()),
-                jump_port: manual_jump.then_some(jump_port).flatten(),
+                jump_port,
                 jump_user: manual_jump.then(|| form.jump_user.read(cx).value()),
                 jump_identity_file: manual_jump
                     .then_some(jump_identity)
@@ -451,57 +444,15 @@ impl TunnelMateApp {
     }
 
     pub(super) fn trust_prompted_host(&mut self, cx: &mut Context<Self>) {
-        let Some(AuthPrompt::HostKey {
-            tunnel_id,
-            issue: HostKeyIssue::Unknown,
-            host,
-            port,
-            fingerprint,
-            ..
-        }) = &self.auth_prompt
-        else {
-            return;
-        };
-        let (tunnel_id, host, port, fingerprint) =
-            (tunnel_id.clone(), host.clone(), *port, fingerprint.clone());
-        let jump = match self.prompted_host_jump(&tunnel_id, &host, port) {
-            Ok(jump) => jump,
-            Err(error) => {
-                self.show_persistent_notice(error);
-                cx.notify();
-                return;
-            }
-        };
-        let passphrase = self.pending_passphrases.get(&tunnel_id).cloned();
-        let error_prefix = self
-            .language
-            .pick("信任主机密钥失败", "Failed to trust host key")
-            .to_string();
-        let sender = self.messages.clone();
-        self.runtime.spawn(async move {
-            match tunnel_core::ssh::engine::SshSession::trust_host_key_via(
-                &host,
-                port,
-                &fingerprint,
-                jump.as_ref(),
-                passphrase.as_deref(),
-            )
-            .await
-            {
-                Ok(()) => {
-                    let _ = sender.send(AppMessage::HostTrusted(tunnel_id)).await;
-                }
-                Err(error) => {
-                    let _ = sender
-                        .send(AppMessage::FileOperation {
-                            message: format!("{error_prefix}: {error}"),
-                            transient: false,
-                        })
-                        .await;
-                }
-            }
-        });
-        cx.notify();
+        if matches!(
+            self.auth_prompt,
+            Some(AuthPrompt::HostKey {
+                issue: HostKeyIssue::Unknown,
+                ..
+            })
+        ) {
+            self.save_prompted_host_key(cx);
+        }
     }
 
     pub(super) fn begin_host_key_replacement(&mut self, cx: &mut Context<Self>) {
@@ -527,20 +478,37 @@ impl TunnelMateApp {
     }
 
     pub(super) fn replace_prompted_host_key(&mut self, cx: &mut Context<Self>) {
+        if matches!(
+            self.auth_prompt,
+            Some(AuthPrompt::HostKey {
+                issue: HostKeyIssue::Changed,
+                confirm_replace: true,
+                ..
+            })
+        ) {
+            self.save_prompted_host_key(cx);
+        }
+    }
+
+    fn save_prompted_host_key(&mut self, cx: &mut Context<Self>) {
         let Some(AuthPrompt::HostKey {
             tunnel_id,
-            issue: HostKeyIssue::Changed,
+            issue,
             host,
             port,
             fingerprint,
-            confirm_replace: true,
             ..
         }) = &self.auth_prompt
         else {
             return;
         };
-        let (tunnel_id, host, port, fingerprint) =
-            (tunnel_id.clone(), host.clone(), *port, fingerprint.clone());
+        let (tunnel_id, issue, host, port, fingerprint) = (
+            tunnel_id.clone(),
+            *issue,
+            host.clone(),
+            *port,
+            fingerprint.clone(),
+        );
         let jump = match self.prompted_host_jump(&tunnel_id, &host, port) {
             Ok(jump) => jump,
             Err(error) => {
@@ -552,31 +520,41 @@ impl TunnelMateApp {
         let passphrase = self.pending_passphrases.get(&tunnel_id).cloned();
         let error_prefix = self
             .language
-            .pick("更新主机密钥失败", "Failed to update host key")
-            .to_string();
+            .pick("保存主机密钥失败", "Failed to save host key");
         let sender = self.messages.clone();
         self.runtime.spawn(async move {
-            match tunnel_core::ssh::engine::SshSession::replace_host_key_via(
-                &host,
-                port,
-                &fingerprint,
-                jump.as_ref(),
-                passphrase.as_deref(),
-            )
-            .await
-            {
-                Ok(()) => {
-                    let _ = sender.send(AppMessage::HostTrusted(tunnel_id)).await;
+            use tunnel_core::ssh::engine::SshSession;
+            let result = match issue {
+                HostKeyIssue::Unknown => {
+                    SshSession::trust_host_key_via(
+                        &host,
+                        port,
+                        &fingerprint,
+                        jump.as_ref(),
+                        passphrase.as_deref(),
+                    )
+                    .await
                 }
-                Err(error) => {
-                    let _ = sender
-                        .send(AppMessage::FileOperation {
-                            message: format!("{error_prefix}: {error}"),
-                            transient: false,
-                        })
-                        .await;
+                HostKeyIssue::Changed => {
+                    SshSession::replace_host_key_via(
+                        &host,
+                        port,
+                        &fingerprint,
+                        jump.as_ref(),
+                        passphrase.as_deref(),
+                    )
+                    .await
                 }
-            }
+                HostKeyIssue::Revoked => return,
+            };
+            let message = match result {
+                Ok(()) => AppMessage::HostTrusted(tunnel_id),
+                Err(error) => AppMessage::FileOperation {
+                    message: format!("{error_prefix}: {error}"),
+                    transient: false,
+                },
+            };
+            let _ = sender.send(message).await;
         });
         cx.notify();
     }

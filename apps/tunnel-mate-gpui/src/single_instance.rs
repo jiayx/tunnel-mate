@@ -51,30 +51,19 @@ impl SingleInstanceGuard {
 #[cfg(test)]
 mod tests {
     use super::SingleInstanceGuard;
-    use std::path::PathBuf;
-
-    fn test_lock_path() -> PathBuf {
-        std::env::temp_dir()
-            .join(format!(
-                "tunnel-mate-single-instance-{}",
-                uuid::Uuid::new_v4()
-            ))
-            .join("instance.lock")
-    }
 
     #[test]
-    fn rejects_a_second_guard_for_the_same_path() {
-        let path = test_lock_path();
-        let first = SingleInstanceGuard::acquire_at(&path).unwrap();
-        assert!(first.is_some());
-        assert!(SingleInstanceGuard::acquire_at(&path).unwrap().is_none());
-    }
-
-    #[test]
-    fn lock_can_be_reacquired_after_the_guard_is_dropped() {
-        let path = test_lock_path();
+    fn lock_is_exclusive_until_the_guard_is_dropped() {
+        let directory = std::env::temp_dir().join(format!(
+            "tunnel-mate-single-instance-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let path = directory.join("instance.lock");
         let first = SingleInstanceGuard::acquire_at(&path).unwrap().unwrap();
+        assert!(SingleInstanceGuard::acquire_at(&path).unwrap().is_none());
         drop(first);
-        assert!(SingleInstanceGuard::acquire_at(&path).unwrap().is_some());
+        let next = SingleInstanceGuard::acquire_at(&path).unwrap().unwrap();
+        drop(next);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }

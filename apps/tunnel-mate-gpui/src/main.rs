@@ -5,10 +5,13 @@
 
 mod i18n;
 mod keyboard;
+mod scrollbar;
 #[cfg(target_os = "macos")]
 mod single_instance;
 mod system;
 mod text_input;
+mod theme;
+use theme::Theme;
 mod ui;
 use keyboard::{modal_layer, ModalLayer};
 use ui::{button, close_button, endpoint_label, icon, primary_button, section_heading, toggle};
@@ -24,8 +27,8 @@ use gpui::{
     actions, anchored, deferred, div, img, point, prelude::*, px, relative, rgba, size,
     uniform_list, Anchor, AnchoredPositionMode, App, Bounds, ClipboardItem, Context, Entity,
     FontWeight, IntoElement, KeyBinding, MouseButton, PathPromptOptions, RenderImage, Rgba,
-    SharedString, Task, UniformListScrollHandle, Window, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowOptions,
+    SharedString, Task, UniformListScrollHandle, Window, WindowBackgroundAppearance, WindowBounds,
+    WindowHandle, WindowOptions,
 };
 #[cfg(target_os = "macos")]
 use gpui::{Menu as AppMenu, MenuItem as AppMenuItem, OsAction, SystemMenuType};
@@ -44,12 +47,7 @@ use i18n::Language;
 use text_input::TextInput;
 
 const fn color(hex: u32) -> Rgba {
-    Rgba {
-        r: ((hex >> 16) & 0xff) as f32 / 255.0,
-        g: ((hex >> 8) & 0xff) as f32 / 255.0,
-        b: (hex & 0xff) as f32 / 255.0,
-        a: 1.0,
-    }
+    glass(hex, 1.0)
 }
 
 const fn glass(hex: u32, alpha: f32) -> Rgba {
@@ -93,10 +91,6 @@ fn ssh_host_matches(host: &SshHostConfig, current: &str) -> bool {
                 .is_some_and(|host_name| host_name.eq_ignore_ascii_case(current)))
 }
 
-fn notice_is_current(current_id: Option<u64>, expected_id: u64) -> bool {
-    current_id == Some(expected_id)
-}
-
 fn progress_notice_clears_on_status(
     kind: NoticeKind,
     notice_tunnel_id: Option<&str>,
@@ -109,22 +103,6 @@ fn progress_notice_clears_on_status(
             None => !has_pending_tunnels,
         }
 }
-
-const APP_BG: Rgba = color(0x10141c);
-const SIDEBAR_BG: Rgba = glass(0x151b26, 0.94);
-const SURFACE: Rgba = color(0x1a2230);
-const SURFACE_HOVER: Rgba = color(0x253249);
-const BORDER: Rgba = color(0x334157);
-const BORDER_SOFT: Rgba = color(0x252f40);
-const TEXT: Rgba = color(0xeaf0f9);
-const MUTED: Rgba = color(0xa7b5cb);
-const MUTED_DARK: Rgba = color(0x8595ae);
-const PRIMARY: Rgba = color(0x2764e7);
-const PRIMARY_HOVER: Rgba = color(0x3979f4);
-const PRIMARY_TEXT: Rgba = color(0xffffff);
-const SUCCESS: Rgba = color(0x63cda7);
-const WARNING: Rgba = color(0xd2a85e);
-const DANGER: Rgba = color(0xdc747c);
 
 actions!(
     tunnel_mate,
@@ -245,6 +223,8 @@ mod workspace;
 
 impl Render for TunnelMateApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.theme = Theme::from_appearance(window.appearance());
+        let theme = self.theme;
         self.sync_modal_focus(window, cx);
         if let Some(input) = self.pending_field_focus.take() {
             window.focus(&gpui::Focusable::focus_handle(input.read(cx), cx), cx);
@@ -271,8 +251,8 @@ impl Render for TunnelMateApp {
             .flex()
             .size_full()
             .pt(window_content_top_padding(self))
-            .bg(APP_BG)
-            .text_color(TEXT);
+            .bg(theme.app_bg)
+            .text_color(theme.text);
         root.child(self.render_sidebar(cx))
             .child(self.render_workspace(cx))
             .when(self.form.is_some(), |root| {
@@ -453,7 +433,6 @@ fn main() {
             KeyBinding::new("escape", Dismiss, Some("TunnelMate")),
             KeyBinding::new("enter", SubmitPrimary, Some("TunnelMate && !TunnelButton")),
         ]);
-        cx.set_window_appearance(Some(WindowAppearance::Dark));
         let window_size = size(px(1040.0), px(740.0));
         let bounds = cx
             .primary_display()
@@ -461,7 +440,10 @@ fn main() {
             .unwrap_or_else(|| Bounds::centered(None, window_size, cx));
         let window_handle = cx
             .open_window(platform_window_options(bounds), |window, cx| {
-                let app = cx.new(TunnelMateApp::load);
+                window
+                    .observe_window_appearance(|window, _| window.refresh())
+                    .detach();
+                let app = cx.new(|cx| TunnelMateApp::load(window, cx));
                 let weak = app.downgrade();
                 window.on_window_should_close(cx, move |window, cx| {
                     if let Some(app) = weak.upgrade() {
@@ -501,16 +483,9 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        notice_is_current, parse_host_key_prompt, progress_notice_clears_on_status,
-        ssh_host_matches, HostKeyIssue, Language, NoticeKind, SshHostConfig,
+        parse_host_key_prompt, progress_notice_clears_on_status, ssh_host_matches, HostKeyIssue,
+        NoticeKind, SshHostConfig,
     };
-
-    #[test]
-    fn only_dismisses_the_notice_that_started_the_timer() {
-        assert!(notice_is_current(Some(7), 7));
-        assert!(!notice_is_current(Some(8), 7));
-        assert!(!notice_is_current(None, 7));
-    }
 
     #[test]
     fn status_changes_only_dismiss_the_matching_progress_notice() {
@@ -567,13 +542,6 @@ mod tests {
             vec!["SHA256:old", "SHA256:older"]
         );
         assert!(parse_host_key_prompt("ordinary error").is_none());
-    }
-
-    #[test]
-    fn selects_chinese_only_for_chinese_system_locales() {
-        assert_eq!(Language::from_locale("zh-CN"), Language::Zh);
-        assert_eq!(Language::from_locale("zh_Hant_TW"), Language::Zh);
-        assert_eq!(Language::from_locale("en-US"), Language::En);
     }
 
     #[test]

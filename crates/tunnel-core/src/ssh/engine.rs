@@ -332,14 +332,6 @@ impl SshSession {
         })
     }
 
-    pub async fn trust_host_key(
-        host: &str,
-        port: u16,
-        expected_fingerprint: &str,
-    ) -> Result<(), String> {
-        Self::trust_host_key_via(host, port, expected_fingerprint, None, None).await
-    }
-
     pub async fn trust_host_key_via(
         host: &str,
         port: u16,
@@ -423,14 +415,6 @@ impl SshSession {
         result.map(|_| ())
     }
 
-    pub async fn replace_host_key(
-        host: &str,
-        port: u16,
-        expected_fingerprint: &str,
-    ) -> Result<(), String> {
-        Self::replace_host_key_via(host, port, expected_fingerprint, None, None).await
-    }
-
     pub async fn replace_host_key_via(
         host: &str,
         port: u16,
@@ -472,10 +456,6 @@ impl SshSession {
 
     pub fn take_forwarded_receiver(&mut self) -> Option<mpsc::Receiver<ForwardedTcp>> {
         self.forwarded_rx.take()
-    }
-
-    pub async fn is_alive(&self) -> bool {
-        !self.handle.read().await.is_closed()
     }
 
     pub async fn closed_reason(handle: &SharedSshHandle) -> Option<String> {
@@ -545,13 +525,10 @@ async fn authenticate_handle(
         Ok(false) => None,
         Err(error) => Some(error),
     };
-    for key_path in default_key_candidates().into_iter().filter_map(|key_path| {
-        if !key_path.exists() {
-            return None;
-        }
-
-        Some(key_path)
-    }) {
+    for key_path in default_key_candidates()
+        .into_iter()
+        .filter(|key_path| key_path.exists())
+    {
         match authenticate_key_file(handle, user, key_path, passphrase).await {
             Ok(()) => return Ok(()),
             Err(err) => {
@@ -743,7 +720,7 @@ fn select_rsa_hash(
     }
 }
 
-pub fn default_key_candidates() -> Vec<PathBuf> {
+fn default_key_candidates() -> Vec<PathBuf> {
     let Some(home) = dirs::home_dir() else {
         return Vec::new();
     };

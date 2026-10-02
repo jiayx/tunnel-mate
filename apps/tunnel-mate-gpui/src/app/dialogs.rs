@@ -10,3 +10,6 @@ mod diagnostics;
 mod ssh_picker;
 #[path = "dialogs/tunnel_confirmations.rs"]
 mod tunnel_confirmations;
+
+#[path = "dialogs/confirmation.rs"]
+mod confirmation;

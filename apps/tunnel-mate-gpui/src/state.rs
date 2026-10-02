@@ -61,6 +61,7 @@ pub(crate) struct AppNotice {
 }
 
 pub(crate) struct DiagnosticState {
+    pub(crate) scroll: gpui::ScrollHandle,
     pub(crate) request_id: u64,
     pub(crate) tunnel_id: String,
     pub(crate) tunnel_name: String,
@@ -187,6 +188,8 @@ pub(crate) struct TunnelForm {
     pub(crate) jump_host_id: Option<String>,
     pub(crate) group_id: Option<String>,
     pub(crate) group_menu_open: bool,
+    pub(crate) group_menu_scroll: gpui::ScrollHandle,
+    pub(crate) ssh_picker_scroll: gpui::ScrollHandle,
     pub(crate) name: Entity<TextInput>,
     pub(crate) description: Entity<TextInput>,
     pub(crate) ssh_host: Entity<TextInput>,
@@ -301,6 +304,8 @@ impl TunnelForm {
             jump_host_id: tunnel.and_then(|tunnel| tunnel.jump_host_id.clone()),
             group_id: tunnel.and_then(|tunnel| tunnel.group_id.clone()),
             group_menu_open: false,
+            group_menu_scroll: gpui::ScrollHandle::new(),
+            ssh_picker_scroll: gpui::ScrollHandle::new(),
             name: input(
                 language.pick("例如：生产数据库", "e.g. Production database"),
                 tunnel.map(|tunnel| tunnel.name.clone()).unwrap_or_default(),
@@ -445,6 +450,7 @@ impl TunnelForm {
 }
 
 pub(crate) struct TunnelMateApp {
+    pub(crate) theme: Theme,
     pub(crate) language: Language,
     pub(crate) logo: Arc<RenderImage>,
     pub(crate) config: AppConfig,
@@ -463,6 +469,8 @@ pub(crate) struct TunnelMateApp {
     pub(crate) diagnostics: Option<DiagnosticState>,
     pub(crate) next_diagnostic_id: u64,
     pub(crate) tunnel_scroll: UniformListScrollHandle,
+    pub(crate) groups_scroll: gpui::ScrollHandle,
+    pub(crate) auth_prompt_scroll: gpui::ScrollHandle,
     pub(crate) root_focus: gpui::FocusHandle,
     pub(crate) modal_focus: gpui::FocusHandle,
     pub(crate) return_focus: Option<gpui::FocusHandle>,
@@ -495,6 +503,7 @@ mod diagnostic_tests {
 
     fn running(request_id: u64, tunnel_id: &str) -> DiagnosticState {
         DiagnosticState {
+            scroll: gpui::ScrollHandle::new(),
             request_id,
             tunnel_id: tunnel_id.into(),
             tunnel_name: "Test tunnel".into(),

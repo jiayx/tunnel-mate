@@ -9,24 +9,25 @@ mod ssh_connection;
 
 impl TunnelMateApp {
     pub(super) fn render_create_sheet(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = self.theme;
         let form = self.form.as_ref().expect("open form");
         let editing = form.editing_id.is_some();
         let kind_button = |label: &'static str, kind: ForwardKind, id: &'static str| {
             let selected = form.kind == kind;
-            button(id, label)
+            button(theme, id, label)
                 .flex_1()
                 .h(px(36.0))
                 .bg(if selected {
-                    color(0x284670)
+                    theme.selected
                 } else {
                     rgba(0x00000000)
                 })
                 .border_color(if selected {
-                    color(0x4a72a7)
+                    theme.selected_border
                 } else {
                     rgba(0x00000000)
                 })
-                .text_color(if selected { TEXT } else { MUTED })
+                .text_color(if selected { theme.text } else { theme.muted })
                 .on_click(cx.listener(move |this, _, _, cx| this.set_form_kind(kind, cx)))
         };
         let (description, listen_label, target_label) = match form.kind {
@@ -66,13 +67,14 @@ impl TunnelMateApp {
                     div()
                         .flex_1()
                         .min_w_0()
-                        .child(Self::required_form_field(label, host)),
+                        .child(Self::required_form_field(theme, label, host)),
                 )
                 .child(
                     div()
                         .w(px(82.0))
                         .flex_none()
                         .child(Self::required_form_field(
+                            theme,
                             self.language.pick("端口", "Port"),
                             port,
                         )),
@@ -82,7 +84,7 @@ impl TunnelMateApp {
             .id("tunnel-form-scroll")
             .track_scroll(&form.scroll)
             .overflow_y_scroll()
-            .flex_1()
+            .size_full()
             .min_h(px(0.0))
             .p(px(22.0))
             .flex()
@@ -99,7 +101,7 @@ impl TunnelMateApp {
                             .gap(px(4.0))
                             .p(px(4.0))
                             .rounded(px(11.0))
-                            .bg(APP_BG)
+                            .bg(theme.app_bg)
                             .child(kind_button(
                                 self.language.pick("本地转发", "Local forwarding"),
                                 ForwardKind::Local,
@@ -115,7 +117,7 @@ impl TunnelMateApp {
                     .child(
                         div()
                             .text_size(px(12.0))
-                            .text_color(MUTED)
+                            .text_color(theme.muted)
                             .child(description),
                     ),
             )
@@ -125,6 +127,7 @@ impl TunnelMateApp {
                     .gap(px(14.0))
                     .items_end()
                     .child(div().flex_1().min_w_0().child(Self::required_form_field(
+                        theme,
                         self.language.pick("名称", "Name"),
                         form.name.clone(),
                     )))
@@ -134,7 +137,7 @@ impl TunnelMateApp {
                             .flex()
                             .flex_col()
                             .gap(px(6.0))
-                            .child(section_heading(self.language.pick("分组", "Group")))
+                            .child(section_heading(theme, self.language.pick("分组", "Group")))
                             .child(self.render_group_dropdown(form, cx)),
                     ),
             )
@@ -146,8 +149,9 @@ impl TunnelMateApp {
                     .gap(px(12.0))
                     .pt(px(16.0))
                     .border_t_1()
-                    .border_color(BORDER_SOFT)
+                    .border_color(theme.border_soft)
                     .child(section_heading(
+                        theme,
                         self.language.pick("转发端口", "Port forwarding"),
                     ))
                     .child(
@@ -173,7 +177,7 @@ impl TunnelMateApp {
             .flex()
             .items_center()
             .justify_center()
-            .bg(rgba(0x080c14bc))
+            .bg(theme.backdrop)
             .child(
                 div()
                     .w(px(720.0))
@@ -184,8 +188,8 @@ impl TunnelMateApp {
                     .flex_col()
                     .rounded(px(16.0))
                     .border_1()
-                    .border_color(BORDER)
-                    .bg(SURFACE)
+                    .border_color(theme.border)
+                    .bg(theme.surface)
                     .shadow_lg()
                     .child(
                         div()
@@ -196,7 +200,7 @@ impl TunnelMateApp {
                             .items_center()
                             .justify_between()
                             .border_b_1()
-                            .border_color(BORDER_SOFT)
+                            .border_color(theme.border_soft)
                             .child(
                                 div()
                                     .text_size(px(19.0))
@@ -207,7 +211,7 @@ impl TunnelMateApp {
                                         self.language.pick("新建隧道", "New tunnel")
                                     }),
                             )
-                            .child(close_button("close-tunnel-form").on_click(
+                            .child(close_button(theme, "close-tunnel-form").on_click(
                                 cx.listener(|this, _, _, cx| this.close_create_sheet(cx)),
                             )),
                     )
@@ -220,15 +224,21 @@ impl TunnelMateApp {
                                 .p(px(12.0))
                                 .rounded(px(8.0))
                                 .border_1()
-                                .border_color(glass(0xdc747c, 0.6))
-                                .bg(glass(0xdc747c, 0.09))
+                                .border_color(theme.danger)
+                                .bg(theme.danger_bg)
                                 .text_size(px(12.0))
-                                .text_color(TEXT)
+                                .text_color(theme.text)
                                 .whitespace_normal()
                                 .child(error),
                         )
                     })
-                    .child(body)
+                    .child(div().relative().flex_1().min_h(px(0.0)).child(body).child(
+                        crate::scrollbar::scrollbar(
+                            "tunnel-form-scrollbar",
+                            theme,
+                            form.scroll.clone(),
+                        ),
+                    ))
                     .child(
                         div()
                             .flex_none()
@@ -238,14 +248,15 @@ impl TunnelMateApp {
                             .items_center()
                             .gap(px(10.0))
                             .border_t_1()
-                            .border_color(BORDER_SOFT)
+                            .border_color(theme.border_soft)
                             .when(editing, |footer| {
                                 footer.child(
                                     button(
+                                        theme,
                                         "delete-tunnel",
                                         self.language.pick("删除隧道", "Delete tunnel"),
                                     )
-                                    .text_color(DANGER)
+                                    .text_color(theme.danger)
                                     .border_color(rgba(0x00000000))
                                     .on_click(cx.listener(
                                         |this, _, _, cx| this.request_delete_from_form(cx),
@@ -254,13 +265,18 @@ impl TunnelMateApp {
                             })
                             .child(div().flex_1())
                             .child(
-                                button("cancel-tunnel", self.language.pick("取消", "Cancel"))
-                                    .on_click(
-                                        cx.listener(|this, _, _, cx| this.close_create_sheet(cx)),
-                                    ),
+                                button(
+                                    theme,
+                                    "cancel-tunnel",
+                                    self.language.pick("取消", "Cancel"),
+                                )
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.close_create_sheet(cx)),
+                                ),
                             )
                             .child(
                                 button(
+                                    theme,
                                     "start-after-save",
                                     self.language.pick("保存后连接", "Connect after save"),
                                 )
@@ -275,17 +291,17 @@ impl TunnelMateApp {
                                         .rounded(px(5.0))
                                         .border_1()
                                         .border_color(if form.start_after_save {
-                                            PRIMARY
+                                            theme.primary
                                         } else {
-                                            BORDER
+                                            theme.border
                                         })
                                         .bg(if form.start_after_save {
-                                            PRIMARY
+                                            theme.primary
                                         } else {
-                                            APP_BG
+                                            theme.app_bg
                                         })
                                         .when(form.start_after_save, |check| {
-                                            check.child(icon("icons/check").size(px(13.0)))
+                                            check.child(icon(theme, "icons/check").size(px(13.0)))
                                         }),
                                 )
                                 .on_click(
@@ -294,6 +310,7 @@ impl TunnelMateApp {
                             )
                             .child(
                                 primary_button(
+                                    theme,
                                     "save-tunnel",
                                     if form.start_after_save {
                                         self.language.pick("保存并连接", "Save & connect")

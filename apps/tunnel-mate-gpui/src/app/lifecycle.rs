@@ -1,7 +1,7 @@
 use super::*;
 
 impl TunnelMateApp {
-    pub(super) fn load(cx: &mut Context<Self>) -> Self {
+    pub(super) fn load(window: &Window, cx: &mut Context<Self>) -> Self {
         let language = Language::system();
         let (config, load_error) = match ConfigStore::new().load_config() {
             Ok(config) => (config, None),
@@ -62,7 +62,8 @@ impl TunnelMateApp {
             let tunnel_name = tunnel.name.clone();
             runtime.spawn(async move {
                 if let Err(message) =
-                    TunnelManager::start_tunnel_silent(startup_manager, tunnel).await
+                    TunnelManager::start_tunnel(startup_manager, tunnel, None, LogSink::Silent)
+                        .await
                 {
                     let _ = startup_sender
                         .send(AppMessage::OperationError {
@@ -91,6 +92,7 @@ impl TunnelMateApp {
             pixel.0.swap(0, 2);
         }
         Self {
+            theme: Theme::from_appearance(window.appearance()),
             language,
             logo: Arc::new(RenderImage::new(vec![image::Frame::new(logo)])),
             config,
@@ -109,6 +111,8 @@ impl TunnelMateApp {
             diagnostics: None,
             next_diagnostic_id: 0,
             tunnel_scroll: UniformListScrollHandle::new(),
+            groups_scroll: gpui::ScrollHandle::new(),
+            auth_prompt_scroll: gpui::ScrollHandle::new(),
             root_focus: cx.focus_handle(),
             modal_focus: cx.focus_handle(),
             return_focus: None,
@@ -150,6 +154,7 @@ impl TunnelMateApp {
                     if message == "PASSPHRASE_REQUIRED" {
                         self.pending_passphrases.remove(&payload.tunnel_id);
                         intervention = true;
+                        self.auth_prompt_scroll = gpui::ScrollHandle::new();
                         self.auth_prompt = Some(AuthPrompt::Passphrase {
                             tunnel_id: payload.tunnel_id.clone(),
                             input: cx.new(|cx| {
@@ -164,6 +169,7 @@ impl TunnelMateApp {
                         parse_host_key_prompt(message)
                     {
                         intervention = true;
+                        self.auth_prompt_scroll = gpui::ScrollHandle::new();
                         self.auth_prompt = Some(AuthPrompt::HostKey {
                             tunnel_id: payload.tunnel_id.clone(),
                             issue,
@@ -185,22 +191,18 @@ impl TunnelMateApp {
                 self.statuses.insert(tunnel_id.clone(), status.clone());
                 let restart_after_stop =
                     status == TunnelStatus::Stopped && self.pending_starts.remove(&tunnel_id);
-                match status {
-                    TunnelStatus::Running | TunnelStatus::Stopped => {
-                        let has_pending_tunnels = self.statuses.values().any(|status| {
-                            matches!(
-                                status,
-                                TunnelStatus::Connecting | TunnelStatus::Reconnecting
-                            )
-                        });
-                        self.clear_progress_notice(&tunnel_id, has_pending_tunnels);
+                if intervention || matches!(status, TunnelStatus::Running | TunnelStatus::Stopped) {
+                    let has_pending_tunnels = self.statuses.values().any(|status| {
+                        matches!(
+                            status,
+                            TunnelStatus::Connecting | TunnelStatus::Reconnecting
+                        )
+                    });
+                    self.clear_progress_notice(&tunnel_id, has_pending_tunnels);
+                } else if status == TunnelStatus::Failed {
+                    if let Some(message) = payload.message {
+                        self.show_persistent_notice(self.language.runtime_message(&message));
                     }
-                    TunnelStatus::Failed if !intervention => {
-                        if let Some(message) = payload.message {
-                            self.show_persistent_notice(self.language.runtime_message(&message));
-                        }
-                    }
-                    _ => {}
                 }
                 self.refresh_tray();
                 if restart_after_stop {
@@ -342,14 +344,7 @@ impl TunnelMateApp {
                     });
                 }
             }
-            AppMessage::Tray(id) if id == "quit" => {
-                let manager = self.manager.clone();
-                let sender = self.messages.clone();
-                self.runtime.spawn(async move {
-                    TunnelManager::stop_all(manager).await;
-                    let _ = sender.send(AppMessage::QuitReady).await;
-                });
-            }
+            AppMessage::Tray(id) if id == "quit" => self.request_quit(),
             AppMessage::Tray(id) if id.starts_with("tunnel:") => {
                 self.request_toggle(id.trim_start_matches("tunnel:").to_string(), cx);
             }

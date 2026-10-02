@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
 
@@ -43,7 +43,7 @@ pub struct LogEvent {
 }
 
 pub struct EventLogger {
-    store: ConfigStore,
+    path: PathBuf,
 }
 
 impl Default for EventLogger {
@@ -55,12 +55,8 @@ impl Default for EventLogger {
 impl EventLogger {
     pub fn new() -> Self {
         Self {
-            store: ConfigStore::new(),
+            path: ConfigStore::new().get_events_path(),
         }
-    }
-
-    pub fn with_store(store: ConfigStore) -> Self {
-        Self { store }
     }
 
     pub fn log(
@@ -91,7 +87,7 @@ impl EventLogger {
             message,
         };
 
-        let path = self.store.get_events_path();
+        let path = &self.path;
         let _guard = event_file_lock()
             .lock()
             .map_err(|_| "Events file lock was poisoned".to_string())?;
@@ -111,12 +107,12 @@ impl EventLogger {
         let mut file = fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&path)
+            .open(path)
             .map_err(|e| format!("Failed to open events file: {}", e))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))
                 .map_err(|e| format!("Failed to secure events file: {}", e))?;
         }
         writeln!(file, "{}", content).map_err(|e| format!("Failed to write events data: {}", e))?;
@@ -128,21 +124,21 @@ impl EventLogger {
             .unwrap_or(false)
         {
             drop(file);
-            compact_events_file(&path)?;
+            compact_events_file(path)?;
         }
 
         Ok(event)
     }
 
     pub fn get_events(&self) -> Result<Vec<LogEvent>, String> {
-        let path = self.store.get_events_path();
+        let path = &self.path;
         if !path.exists() {
             return Ok(Vec::new());
         }
         let _guard = event_file_lock()
             .lock()
             .map_err(|_| "Events file lock was poisoned".to_string())?;
-        read_last_lines(&path)?
+        read_last_lines(path)?
             .into_iter()
             .map(|line| {
                 serde_json::from_str(&line)
@@ -152,12 +148,12 @@ impl EventLogger {
     }
 
     pub fn clear_events(&self) -> Result<(), String> {
-        let path = self.store.get_events_path();
+        let path = &self.path;
         let _guard = event_file_lock()
             .lock()
             .map_err(|_| "Events file lock was poisoned".to_string())?;
         if path.exists() {
-            fs::remove_file(&path).map_err(|e| format!("Failed to delete events file: {}", e))?;
+            fs::remove_file(path).map_err(|e| format!("Failed to delete events file: {}", e))?;
         }
         Ok(())
     }
@@ -211,13 +207,13 @@ fn compact_events_file(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn appends_reads_and_clears_events_in_order() {
         let directory = tempfile::tempdir().unwrap();
-        let logger =
-            EventLogger::with_store(ConfigStore::from_base_path(PathBuf::from(directory.path())));
+        let logger = EventLogger {
+            path: directory.path().join("events.jsonl"),
+        };
 
         logger
             .log(
@@ -248,9 +244,8 @@ mod tests {
     #[test]
     fn rotates_large_event_files_to_the_latest_entries() {
         let directory = tempfile::tempdir().unwrap();
-        let store = ConfigStore::from_base_path(PathBuf::from(directory.path()));
-        let path = store.get_events_path();
-        let logger = EventLogger::with_store(store);
+        let path = directory.path().join("events.jsonl");
+        let logger = EventLogger { path: path.clone() };
         let payload = "x".repeat(3_000);
 
         for index in 0..1_050 {

@@ -41,10 +41,6 @@ impl TunnelMateApp {
         .detach();
     }
 
-    pub(super) fn import_backup(&mut self, cx: &mut Context<Self>) {
-        self.open_import_picker(cx);
-    }
-
     pub(super) fn cancel_import_backup(&mut self, cx: &mut Context<Self>) {
         self.pending_import = None;
         cx.notify();
@@ -55,6 +51,11 @@ impl TunnelMateApp {
             return;
         };
         self.settings_form = None;
+        self.commit_import(config);
+        cx.notify();
+    }
+
+    pub(super) fn commit_import(&self, config: AppConfig) {
         let manager = self.manager.clone();
         let sender = self.messages.clone();
         let language = self.language;
@@ -69,30 +70,18 @@ impl TunnelMateApp {
             };
             let _ = sender.send(message).await;
         });
-        cx.notify();
     }
 
-    pub(super) fn commit_import(&self, config: AppConfig) {
-        let sender = self.messages.clone();
-        let language = self.language;
-        self.runtime.spawn(async move {
-            let message = match ConfigStore::new().save_config(&config) {
-                Ok(()) => AppMessage::ConfigImported(config),
-                Err(error) => AppMessage::ImportFailed(format!(
-                    "{}: {error}",
-                    language.pick("导入保存失败", "Could not save imported configuration")
-                )),
-            };
-            let _ = sender.send(message).await;
-        });
-    }
-
-    pub(super) fn open_import_picker(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn import_backup(&mut self, cx: &mut Context<Self>) {
         let receiver = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("导入配置".into()),
+            prompt: Some(
+                self.language
+                    .pick("导入配置", "Import configuration")
+                    .into(),
+            ),
         });
         let sender = self.messages.clone();
         let language = self.language;
