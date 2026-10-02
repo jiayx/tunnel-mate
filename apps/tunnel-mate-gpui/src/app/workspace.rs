@@ -1,5 +1,23 @@
 use super::*;
 
+pub(super) fn tunnel_columns(
+    identity: impl IntoElement,
+    forwarding: impl IntoElement,
+    kind: impl IntoElement,
+    connection: impl IntoElement,
+) -> gpui::Div {
+    div()
+        .w_full()
+        .flex()
+        .items_start()
+        .gap(px(16.0))
+        .px(px(22.0))
+        .child(div().flex_1().min_w_0().child(identity))
+        .child(div().flex_1().min_w_0().child(forwarding))
+        .child(div().w(px(64.0)).flex_none().child(kind))
+        .child(div().w(px(108.0)).flex_none().child(connection))
+}
+
 fn render_activity_row(theme: Theme, language: Language, event: LogEvent) -> gpui::Div {
     use tunnel_core::event_logger::EventType;
     let (label, tone) = match event.event_type {
@@ -467,43 +485,26 @@ impl TunnelMateApp {
                         .child(div().flex_1().min_w_0().child(self.search.clone())),
                 );
             center = center.child(
-                div()
-                    .h(px(34.0))
-                    .flex_none()
-                    .px(px(22.0))
-                    .flex()
-                    .items_center()
-                    .gap(px(16.0))
-                    .bg(theme.app_bg)
-                    .border_y_1()
-                    .border_color(theme.border_soft)
-                    .text_size(px(11.0))
-                    .text_color(theme.muted)
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(self.language.pick("隧道 / SSH 主机", "TUNNEL / SSH HOST")),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(self.language.pick("监听 → 目标", "LISTEN → TARGET")),
-                    )
-                    .child(
-                        div()
-                            .w(px(92.0))
-                            .flex_none()
-                            .child(self.language.pick("状态", "STATUS")),
-                    )
-                    .child(
-                        div()
-                            .w(px(88.0))
-                            .flex_none()
-                            .text_right()
-                            .child(self.language.pick("连接", "CONNECTION")),
-                    ),
+                tunnel_columns(
+                    div()
+                        .truncate()
+                        .child(self.language.pick("隧道 / SSH 主机", "TUNNEL / SSH HOST")),
+                    div()
+                        .truncate()
+                        .child(self.language.pick("监听 → 目标", "LISTEN → TARGET")),
+                    div().child(self.language.pick("类型", "TYPE")),
+                    div()
+                        .text_center()
+                        .child(self.language.pick("连接", "CONNECTION")),
+                )
+                .h(px(34.0))
+                .flex_none()
+                .items_center()
+                .bg(theme.app_bg)
+                .border_y_1()
+                .border_color(theme.border_soft)
+                .text_size(px(11.0))
+                .text_color(theme.muted),
             );
         } else {
             center = center.child(
