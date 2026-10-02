@@ -3,6 +3,7 @@ use super::super::*;
 impl TunnelMateApp {
     pub(crate) fn set_filter(&mut self, filter: TunnelFilter, cx: &mut Context<Self>) {
         self.filter = filter;
+        self.tunnel_scroll = UniformListScrollHandle::new();
         self.selected_tunnel = self
             .config
             .tunnels
@@ -178,13 +179,54 @@ impl TunnelMateApp {
         } else {
             DiagnosticLanguage::English
         };
-        self.diagnostics = Some(Vec::new());
+        self.next_diagnostic_id = self.next_diagnostic_id.wrapping_add(1);
+        let request_id = self.next_diagnostic_id;
+        let tunnel_name = tunnel.name.clone();
+        let address = format!(
+            "{}@{}",
+            tunnel.ssh_user,
+            endpoint_label(&tunnel.ssh_host, tunnel.ssh_port)
+        );
         self.clear_notice();
-        self.runtime.spawn(async move {
+        let task = self.runtime.spawn(async move {
             let steps =
                 run_diagnostics(&tunnel, &all, None, language, listener_is_current_tunnel).await;
-            let _ = sender.send(AppMessage::Diagnostics(steps)).await;
+            let _ = sender
+                .send(AppMessage::Diagnostics {
+                    request_id,
+                    tunnel_id: tunnel.id,
+                    steps,
+                })
+                .await;
         });
+        self.diagnostics = Some(DiagnosticState {
+            request_id,
+            tunnel_id: id,
+            tunnel_name,
+            address,
+            steps: None,
+            copied: false,
+            task: Some(task),
+        });
+        cx.notify();
+    }
+
+    pub(crate) fn copy_diagnostics(&mut self, cx: &mut Context<Self>) {
+        let Some(diagnostics) = &mut self.diagnostics else {
+            return;
+        };
+        let Some(steps) = &diagnostics.steps else {
+            return;
+        };
+        let mut report = format!("{}\n{}\n", diagnostics.tunnel_name, diagnostics.address);
+        for step in steps {
+            report.push_str(&format!(
+                "\n[{}] {}\n{}\n",
+                step.status, step.name, step.message
+            ));
+        }
+        cx.write_to_clipboard(ClipboardItem::new_string(report));
+        diagnostics.copied = true;
         cx.notify();
     }
 
@@ -226,48 +268,25 @@ impl TunnelMateApp {
     }
 
     pub(crate) fn dismiss(&mut self, cx: &mut Context<Self>) {
-        if self.auth_prompt.is_some() {
-            self.close_auth_prompt(cx);
-            return;
-        }
-        if self.about_open {
-            self.about_open = false;
-            cx.notify();
-            return;
-        }
-        if let Some(form) = &mut self.form {
-            if form.ssh_picker_target.is_some() {
-                form.ssh_picker_target = None;
-                cx.notify();
-                return;
+        match self.top_modal() {
+            Some(ModalLayer::About) => self.close_about(cx),
+            Some(ModalLayer::Auth) => self.close_auth_prompt(cx),
+            Some(ModalLayer::Import) => self.cancel_import_backup(cx),
+            Some(ModalLayer::Settings) => self.cancel_settings(cx),
+            Some(ModalLayer::Group) => self.close_group_form(cx),
+            Some(ModalLayer::Diagnostics) => self.close_diagnostics(cx),
+            Some(ModalLayer::DeleteGroup) => self.cancel_group_delete_confirmation(cx),
+            Some(ModalLayer::Delete) => self.cancel_delete_confirmation(cx),
+            Some(ModalLayer::Save) => self.cancel_save_confirmation(cx),
+            Some(ModalLayer::SshPicker) => self.close_ssh_hosts(cx),
+            Some(ModalLayer::Tunnel) => {
+                if self.form.as_ref().is_some_and(|form| form.group_menu_open) {
+                    self.close_form_group_menu(cx);
+                } else {
+                    self.close_create_sheet(cx);
+                }
             }
-            if form.group_menu_open {
-                form.group_menu_open = false;
-                cx.notify();
-                return;
-            }
+            None => {}
         }
-        if self.pending_import.is_some() {
-            self.pending_import = None;
-            cx.notify();
-            return;
-        }
-        if self.delete_confirmation.take().is_some() {
-            cx.notify();
-            return;
-        }
-        if self.group_delete_confirmation.take().is_some() {
-            cx.notify();
-            return;
-        }
-        if self.save_confirmation.take().is_none()
-            && self.auth_prompt.take().is_none()
-            && self.diagnostics.take().is_none()
-            && self.group_form.take().is_none()
-            && self.settings_form.take().is_none()
-        {
-            self.form = None;
-        }
-        cx.notify();
     }
 }

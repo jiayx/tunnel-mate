@@ -31,14 +31,14 @@ impl TunnelMateApp {
                     .child(
                         div()
                             .mt(px(5.0))
-                            .text_size(px(11.0))
+                            .text_size(px(12.0))
                             .text_color(MUTED)
                             .child(format!("Version {}", env!("CARGO_PKG_VERSION"))),
                     )
                     .child(
                         div()
                             .mt(px(13.0))
-                            .text_size(px(11.0))
+                            .text_size(px(12.0))
                             .text_color(MUTED)
                             .child(self.language.pick(
                                 "简洁、可靠的 SSH 隧道管理工具",
@@ -55,13 +55,14 @@ impl TunnelMateApp {
                             .justify_center()
                             .rounded(px(8.0))
                             .bg(PRIMARY)
-                            .text_size(px(11.0))
+                            .text_size(px(12.0))
                             .text_color(PRIMARY_TEXT)
                             .cursor_pointer()
-                            .on_mouse_up(
-                                MouseButton::Left,
-                                cx.listener(|this, _, _, cx| this.close_about(cx)),
-                            )
+                            .id("close-about")
+                            .key_context("TunnelButton")
+                            .tab_index(0)
+                            .focus(|style| style.border_color(PRIMARY_HOVER))
+                            .on_click(cx.listener(|this, _, _, cx| this.close_about(cx)))
                             .child(self.language.pick("好", "OK")),
                     ),
             )

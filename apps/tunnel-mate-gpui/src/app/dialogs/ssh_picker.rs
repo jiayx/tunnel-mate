@@ -17,7 +17,7 @@ impl TunnelMateApp {
             .border_color(BORDER)
             .bg(color(0x171d27))
             .shadow_lg()
-            .text_size(px(11.0))
+            .text_size(px(12.0))
             .text_color(TEXT)
             .child(div().size(px(7.0)).rounded(px(4.0)).bg(PRIMARY))
             .child(
@@ -38,10 +38,11 @@ impl TunnelMateApp {
                     .text_color(MUTED)
                     .cursor_pointer()
                     .hover(|style| style.bg(SURFACE_HOVER).text_color(TEXT))
-                    .on_mouse_up(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _, cx| this.dismiss_notice(cx)),
-                    )
+                    .id("dismiss_notice")
+                    .key_context("TunnelButton")
+                    .tab_index(0)
+                    .focus(|style| style.border_color(PRIMARY_HOVER))
+                    .on_click(cx.listener(|this, _, _, cx| this.dismiss_notice(cx)))
                     .child("×"),
             )
     }
@@ -102,7 +103,7 @@ impl TunnelMateApp {
                     .text_color(MUTED)
                     .child(div().text_size(px(20.0)).child("⌁"))
                     .child(
-                        div().text_size(px(11.0)).child(
+                        div().text_size(px(12.0)).child(
                             self.language
                                 .pick("SSH config 中没有可用主机", "No hosts found in SSH config"),
                         ),
@@ -130,6 +131,9 @@ impl TunnelMateApp {
                 hosts = hosts.child(
                     div()
                         .id(("ssh-host-option", index))
+                        .key_context("TunnelButton")
+                        .tab_index(0)
+                        .focus(|style| style.border_color(PRIMARY_HOVER))
                         .px(px(12.0))
                         .py(px(10.0))
                         .flex()
@@ -157,10 +161,7 @@ impl TunnelMateApp {
                                 })
                                 .border_color(glass(0x075bea, 0.42))
                         })
-                        .on_mouse_up(
-                            MouseButton::Left,
-                            cx.listener(move |this, _, _, cx| this.apply_ssh_host(index, cx)),
-                        )
+                        .on_click(cx.listener(move |this, _, _, cx| this.apply_ssh_host(index, cx)))
                         .child(
                             div()
                                 .size(px(32.0))
@@ -187,7 +188,7 @@ impl TunnelMateApp {
                                         .text_color(TEXT)
                                         .child(host.host.clone()),
                                 )
-                                .child(div().text_size(px(10.0)).text_color(MUTED).child(endpoint)),
+                                .child(div().text_size(px(12.0)).text_color(MUTED).child(endpoint)),
                         )
                         .when_some(identity, |row, identity| {
                             row.child(
@@ -196,7 +197,7 @@ impl TunnelMateApp {
                                     .py(px(4.0))
                                     .rounded(px(5.0))
                                     .bg(SURFACE)
-                                    .text_size(px(9.0))
+                                    .text_size(px(12.0))
                                     .text_color(MUTED)
                                     .child(identity),
                             )
@@ -244,7 +245,7 @@ impl TunnelMateApp {
                                     .child(div().font_weight(FontWeight::MEDIUM).child(title))
                                     .child(
                                         div()
-                                            .text_size(px(10.0))
+                                            .text_size(px(12.0))
                                             .text_color(MUTED)
                                             .child(description),
                                     ),
@@ -259,8 +260,11 @@ impl TunnelMateApp {
                                     .text_color(MUTED)
                                     .cursor_pointer()
                                     .hover(|style| style.bg(SURFACE_HOVER).text_color(TEXT))
-                                    .on_mouse_up(
-                                        MouseButton::Left,
+                                    .id("close_ssh_hosts")
+                                    .key_context("TunnelButton")
+                                    .tab_index(100)
+                                    .focus(|style| style.border_color(PRIMARY_HOVER))
+                                    .on_click(
                                         cx.listener(|this, _, _, cx| this.close_ssh_hosts(cx)),
                                     )
                                     .child("×"),

@@ -78,7 +78,11 @@ impl TunnelMateApp {
         let search_placeholder =
             language.pick("搜索名称、主机或地址", "Search name, host, or address");
         let search = cx.new(|cx| TextInput::new(cx, search_placeholder, ""));
-        cx.observe(&search, |_, _, cx| cx.notify()).detach();
+        cx.subscribe(&search, |this, _, _: &text_input::InputChanged, cx| {
+            this.tunnel_scroll = UniformListScrollHandle::new();
+            cx.notify();
+        })
+        .detach();
         let mut logo =
             image::load_from_memory(include_bytes!("../../../../assets/icons/128x128.png"))
                 .expect("embedded app icon must be valid")
@@ -86,20 +90,6 @@ impl TunnelMateApp {
         for pixel in logo.pixels_mut() {
             pixel.0.swap(0, 2);
         }
-        let keystroke_subscription = cx.observe_keystrokes(|this, event, window, cx| {
-            if event.keystroke.key == "escape" {
-                this.dismiss(cx);
-            } else if event.keystroke.key == "tab" {
-                if event.keystroke.modifiers.shift {
-                    window.focus_prev(cx);
-                } else {
-                    window.focus_next(cx);
-                }
-                cx.stop_propagation();
-            } else if event.keystroke.key == "enter" {
-                this.submit_primary(cx);
-            }
-        });
         Self {
             language,
             logo: Arc::new(RenderImage::new(vec![image::Frame::new(logo)])),
@@ -117,6 +107,13 @@ impl TunnelMateApp {
             events: Arc::new(ActivityEvents::new(events)),
             activity_scroll: UniformListScrollHandle::new(),
             diagnostics: None,
+            next_diagnostic_id: 0,
+            tunnel_scroll: UniformListScrollHandle::new(),
+            root_focus: cx.focus_handle(),
+            modal_focus: cx.focus_handle(),
+            return_focus: None,
+            active_modal: None,
+            pending_field_focus: None,
             settings_form: None,
             pending_import: None,
             group_form: None,
@@ -135,7 +132,6 @@ impl TunnelMateApp {
             #[cfg(target_os = "macos")]
             _window_layout_observer: None,
             _event_task: event_task,
-            _keystroke_subscription: keystroke_subscription,
             _tray: tray,
         }
     }
@@ -249,9 +245,14 @@ impl TunnelMateApp {
                     )
                 });
             }
-            AppMessage::Diagnostics(steps) => {
-                self.diagnostics = Some(steps);
-                self.clear_notice();
+            AppMessage::Diagnostics {
+                request_id,
+                tunnel_id,
+                steps,
+            } => {
+                if let Some(diagnostics) = &mut self.diagnostics {
+                    diagnostics.complete(request_id, &tunnel_id, steps);
+                }
             }
             AppMessage::ImportSelected(config) => {
                 if self.statuses.values().any(|status| {

@@ -6,284 +6,184 @@ impl TunnelMateApp {
         form: &TunnelForm,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
-        let switch = |enabled: bool| {
-            div()
-                .w(px(42.0))
-                .h(px(24.0))
-                .rounded(px(12.0))
-                .p(px(3.0))
-                .bg(if enabled { PRIMARY } else { rgb(0x343840) })
-                .child(
-                    div()
-                        .size(px(18.0))
-                        .rounded(px(9.0))
-                        .bg(TEXT)
-                        .when(enabled, |dot| dot.ml(px(18.0))),
-                )
-        };
         div()
             .flex()
             .flex_col()
-            .gap(px(14.0))
+            .gap(px(16.0))
             .child(
-                                            div()
-                                                .flex()
-                                                .items_center()
-                                                .justify_between()
-                                                .py(px(9.0))
-                                                .border_t_1()
-                                                .border_color(BORDER)
-                                                .text_size(px(12.0))
-                                                .text_color(MUTED)
-                                                .cursor_pointer()
-                                                .on_mouse_up(
-                                                    MouseButton::Left,
-                                                    cx.listener(|this, _, _, cx| this.toggle_form_advanced(cx)),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .flex()
-                                                        .items_center()
-                                                        .gap(px(6.0))
-                                                        .child(
-                                                            Self::disclosure_chevron(
-                                                                form.advanced,
-                                                                "▾",
-                                                                "▸",
-                                                            ),
-                                                        )
-                                                        .child(
-                                                            self.language.pick("高级设置", "Advanced"),
-                                                        ),
-                                                )
-                                                .child(if form.advanced {
-                                                    self.language.pick("收起", "Collapse")
-                                                } else {
-                                                    self.language.pick(
-                                                        "重连与跳板机",
-                                                        "Reconnect & jump host",
+                button(
+                    "advanced-settings",
+                    self.language.pick("高级设置", "Advanced settings"),
+                )
+                .w_full()
+                .justify_between()
+                .h(px(40.0))
+                .border_color(BORDER_SOFT)
+                .child(div().text_color(MUTED).child(if form.advanced {
+                    self.language.pick("收起 ↑", "Collapse ↑")
+                } else {
+                    self.language
+                        .pick("启动、重连与跳板机 ↓", "Startup, reconnect & jump host ↓")
+                }))
+                .on_click(cx.listener(|this, _, _, cx| this.toggle_form_advanced(cx))),
+            )
+            .when(form.advanced, |panel| {
+                panel
+                    .child(Self::form_field(
+                        self.language.pick("说明（可选）", "Description (optional)"),
+                        form.description.clone(),
+                    ))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .text_size(px(13.0))
+                            .child(
+                                self.language
+                                    .pick("应用启动时连接", "Connect when app starts"),
+                            )
+                            .child(toggle("connect-on-startup", form.start_with_app).on_click(
+                                cx.listener(|this, _, _, cx| this.toggle_form_start_with_app(cx)),
+                            )),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .text_size(px(13.0))
+                            .child(
+                                self.language
+                                    .pick("断线后自动重连", "Reconnect automatically"),
+                            )
+                            .child(toggle("auto-reconnect", form.auto_reconnect).on_click(
+                                cx.listener(|this, _, _, cx| this.toggle_form_reconnect(cx)),
+                            )),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(14.0))
+                            .child(div().flex_1().child(Self::required_form_field(
+                                self.language.pick("重试次数", "Retry count"),
+                                form.retry_count.clone(),
+                            )))
+                            .child(
+                                div().flex_1().child(Self::required_form_field(
+                                    self.language
+                                        .pick("重试间隔（秒）", "Retry interval (seconds)"),
+                                    form.retry_interval.clone(),
+                                )),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .pt(px(16.0))
+                            .border_t_1()
+                            .border_color(BORDER_SOFT)
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .text_size(px(13.0))
+                            .child(self.language.pick("使用跳板机", "Use jump host"))
+                            .child(
+                                toggle("use-jump-host", form.jump_enabled).on_click(
+                                    cx.listener(|this, _, _, cx| this.toggle_jump_host(cx)),
+                                ),
+                            ),
+                    )
+                    .when(form.jump_enabled, |panel| {
+                        panel.child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(14.0))
+                                .p(px(16.0))
+                                .rounded(px(10.0))
+                                .bg(APP_BG)
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .justify_between()
+                                        .child(section_heading(
+                                            self.language
+                                                .pick("跳板机连接", "Jump host connection"),
+                                        ))
+                                        .child(
+                                            button(
+                                                "choose-jump-ssh",
+                                                self.language.pick(
+                                                    "从 SSH config 选择…",
+                                                    "Choose from SSH config…",
+                                                ),
+                                            )
+                                            .h(px(30.0))
+                                            .on_click(
+                                                cx.listener(|this, _, _, cx| {
+                                                    this.open_jump_ssh_hosts(cx)
+                                                }),
+                                            ),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .gap(px(10.0))
+                                        .child(div().flex_1().min_w_0().child(
+                                            Self::required_form_field(
+                                                self.language.pick("主机", "Host"),
+                                                form.jump_host.clone(),
+                                            ),
+                                        ))
+                                        .child(div().w(px(84.0)).child(Self::required_form_field(
+                                            self.language.pick("端口", "Port"),
+                                            form.jump_port.clone(),
+                                        )))
+                                        .child(div().w(px(140.0)).child(
+                                            Self::required_form_field(
+                                                self.language.pick("用户", "User"),
+                                                form.jump_user.clone(),
+                                            ),
+                                        )),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_end()
+                                        .gap(px(8.0))
+                                        .child(div().flex_1().min_w_0().child(
+                                            Self::form_field(
+                                                self.language.pick(
+                                                    "私钥文件（可选）",
+                                                    "Private key (optional)",
+                                                ),
+                                                form.jump_identity_file.clone(),
+                                            ),
+                                        ))
+                                        .child(
+                                            button(
+                                                "choose-jump-key",
+                                                self.language.pick("选择…", "Choose…"),
+                                            )
+                                            .h(px(40.0))
+                                            .on_click(
+                                                cx.listener(|this, _, _, cx| {
+                                                    this.select_private_key(
+                                                        PrivateKeyTarget::JumpHost,
+                                                        cx,
                                                     )
                                                 }),
-                                        )
-                                        .when(form.advanced, |panel| {
-                                            panel
-                                                .child(
-                                                    div()
-                                                        .flex()
-                                                        .gap(px(10.0))
-                                                        .child(div().flex_grow(1.0).child(Self::required_form_field(
-                                                            self.language.pick("重试次数", "Retry count"),
-                                                            form.retry_count.clone(),
-                                                        )))
-                                                        .child(div().flex_grow(1.0).child(Self::required_form_field(
-                                                            self.language.pick(
-                                                                "重试间隔（秒）",
-                                                                "Retry interval (seconds)",
-                                                            ),
-                                                            form.retry_interval.clone(),
-                                                        ))),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .flex()
-                                                        .items_center()
-                                                        .justify_between()
-                                                        .text_size(px(12.0))
-                                                        .text_color(TEXT)
-                                                        .child(
-                                                            self.language.pick(
-                                                                "断线后自动重连",
-                                                                "Reconnect automatically",
-                                                            ),
-                                                        )
-                                                        .child(
-                                                            switch(form.auto_reconnect)
-                                                                .cursor_pointer()
-                                                                .on_mouse_up(
-                                                                    MouseButton::Left,
-                                                                    cx.listener(|this, _, _, cx| {
-                                                                        this.toggle_form_reconnect(cx)
-                                                                    }),
-                                                                ),
-                                                        ),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .flex()
-                                                        .items_center()
-                                                        .justify_between()
-                                                        .pt(px(10.0))
-                                                        .border_t_1()
-                                                        .border_color(BORDER)
-                                                        .text_size(px(12.0))
-                                                        .text_color(TEXT)
-                                                        .child(
-                                                            self.language.pick("使用跳板机", "Use jump host"),
-                                                        )
-                                                        .child(
-                                                            switch(form.jump_enabled)
-                                                                .cursor_pointer()
-                                                                .on_mouse_up(
-                                                                    MouseButton::Left,
-                                                                    cx.listener(|this, _, _, cx| {
-                                                                        this.toggle_jump_host(cx)
-                                                                    }),
-                                                                ),
-                                                        ),
-                                                )
-                                                .when(form.jump_enabled, |advanced| {
-                                                    advanced.child(
-                                                        div()
-                                                            .flex()
-                                                            .flex_col()
-                                                            .gap(px(10.0))
-                                                            .p(px(12.0))
-                                                            .rounded(px(10.0))
-                                                            .border_1()
-                                                            .border_color(BORDER)
-                                                            .bg(APP_BG)
-                                                            .child(
-                                                                div()
-                                                                    .flex()
-                                                                    .items_center()
-                                                                    .justify_between()
-                                                                    .child(
-                                                                        div()
-                                                                            .flex()
-                                                                            .flex_col()
-                                                                            .gap(px(3.0))
-                                                                            .child(
-                                                                                div()
-                                                                                    .text_size(px(12.0))
-                                                                                    .font_weight(
-                                                                                        FontWeight::MEDIUM,
-                                                                                    )
-                                                                                    .text_color(TEXT)
-                                                                                    .child(self.language.pick(
-                                                                                        "跳板机连接",
-                                                                                        "Jump host connection",
-                                                                                    )),
-                                                                            )
-                                                                            .child(
-                                                                                div()
-                                                                                    .text_size(px(10.0))
-                                                                                    .text_color(MUTED)
-                                                                                    .child(self.language.pick(
-                                                                                        "手动填写，或从 SSH config 自动带入下方信息",
-                                                                                        "Enter details manually or fill them from SSH config",
-                                                                                    )),
-                                                                            ),
-                                                                    )
-                                                                    .child(
-                                                                        div()
-                                                                            .h(px(30.0))
-                                                                            .px(px(10.0))
-                                                                            .flex()
-                                                                            .items_center()
-                                                                            .rounded(px(7.0))
-                                                                            .border_1()
-                                                                            .border_color(glass(
-                                                                                0x075bea, 0.45,
-                                                                            ))
-                                                                            .bg(glass(0x075bea, 0.10))
-                                                                            .text_size(px(10.0))
-                                                                            .text_color(PRIMARY_TEXT)
-                                                                            .cursor_pointer()
-                                                                            .hover(|style| {
-                                                                                style.bg(glass(
-                                                                                    0x075bea, 0.16,
-                                                                                ))
-                                                                            })
-                                                                            .on_mouse_up(
-                                                                                MouseButton::Left,
-                                                                                cx.listener(
-                                                                                    |this, _, _, cx| {
-                                                                                        this.open_jump_ssh_hosts(
-                                                                                            cx,
-                                                                                        )
-                                                                                    },
-                                                                                ),
-                                                                            )
-                                                                            .child(self.language.pick(
-                                                                                "从 SSH config 选择…",
-                                                                                "Choose from SSH config…",
-                                                                            )),
-                                                                    ),
-                                                            )
-                                                            .child(
-                                                                div()
-                                                                    .flex()
-                                                                    .gap(px(10.0))
-                                                                    .child(div().flex_grow(1.0).child(
-                                                                        Self::required_form_field(
-                                                                            self.language.pick("主机", "Host"),
-                                                                            form.jump_host.clone(),
-                                                                        ),
-                                                                    ))
-                                                                    .child(div().w(px(100.0)).child(
-                                                                        Self::required_form_field(
-                                                                            self.language.pick("端口", "Port"),
-                                                                            form.jump_port.clone(),
-                                                                        ),
-                                                                    ))
-                                                                    .child(div().w(px(140.0)).child(
-                                                                        Self::required_form_field(
-                                                                            self.language.pick("用户", "User"),
-                                                                            form.jump_user.clone(),
-                                                                        ),
-                                                                    )),
-                                                            )
-                                                            .child(
-                                                                div()
-                                                                    .flex()
-                                                                    .items_end()
-                                                                    .gap(px(8.0))
-                                                                    .child(div().flex_grow(1.0).child(
-                                                                        Self::form_field(
-                                                                            self.language.pick(
-                                                                                "私钥文件",
-                                                                                "Private key",
-                                                                            ),
-                                                                            form.jump_identity_file.clone(),
-                                                                        ),
-                                                                    ))
-                                                                    .child(
-                                                                        div()
-                                                                            .h(px(38.0))
-                                                                            .px(px(11.0))
-                                                                            .flex()
-                                                                            .items_center()
-                                                                            .rounded(px(8.0))
-                                                                            .border_1()
-                                                                            .border_color(BORDER)
-                                                                            .text_size(px(10.0))
-                                                                            .text_color(MUTED)
-                                                                            .cursor_pointer()
-                                                                            .on_mouse_up(
-                                                                                MouseButton::Left,
-                                                                                cx.listener(
-                                                                                    |this, _, _, cx| {
-                                                                                        this.select_private_key(
-                                                                                            PrivateKeyTarget::JumpHost,
-                                                                                            cx,
-                                                                                        )
-                                                                                    },
-                                                                                ),
-                                                                            )
-                                                                            .child(
-                                                                                self.language.pick(
-                                                                                    "选择…",
-                                                                                    "Choose…",
-                                                                                ),
-                                                                            ),
-                                                                    ),
-                                                            )
-                                                            .child(Self::form_field(
-                                                                self.language.pick("密码", "Password"),
-                                                                form.jump_password.clone(),
-                                                            )),
-                                                    )
-                                                })
-                                        })
+                                            ),
+                                        ),
+                                )
+                                .child(Self::form_field(
+                                    self.language.pick("密码（可选）", "Password (optional)"),
+                                    form.jump_password.clone(),
+                                )),
+                        )
+                    })
+            })
     }
 }

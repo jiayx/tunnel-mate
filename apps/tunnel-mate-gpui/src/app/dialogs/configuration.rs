@@ -11,11 +11,11 @@ impl TunnelMateApp {
                 div()
                     .flex()
                     .flex_col()
-                    .w(px(440.0))
+                    .w(px(460.0)).max_w(relative(0.94))
                     .rounded(px(14.0))
                     .border_1()
                     .border_color(BORDER)
-                    .bg(color(0x171d29))
+                    .bg(SURFACE)
                     .p(px(22.0))
                     .child(
                         div()
@@ -56,8 +56,7 @@ impl TunnelMateApp {
                                     .text_size(px(12.0))
                                     .text_color(TEXT)
                                     .cursor_pointer()
-                                    .on_mouse_up(
-                                        MouseButton::Left,
+                                    .id("cancel-import").key_context("TunnelButton").tab_index(0).focus(|style| style.border_color(PRIMARY_HOVER)).on_click(
                                         cx.listener(|this, _, _, cx| {
                                             this.cancel_import_backup(cx)
                                         }),
@@ -75,8 +74,7 @@ impl TunnelMateApp {
                                     .text_size(px(12.0))
                                     .text_color(PRIMARY_TEXT)
                                     .cursor_pointer()
-                                    .on_mouse_up(
-                                        MouseButton::Left,
+                                    .id("confirm-import").key_context("TunnelButton").tab_index(0).focus(|style| style.border_color(PRIMARY_HOVER)).on_click(
                                         cx.listener(|this, _, _, cx| {
                                             this.confirm_import_backup(cx)
                                         }),
@@ -126,8 +124,11 @@ impl TunnelMateApp {
                                     .rounded(px(7.0))
                                     .text_color(MUTED)
                                     .cursor_pointer()
-                                    .on_mouse_up(
-                                        MouseButton::Left,
+                                    .id("close-group-form")
+                                    .key_context("TunnelButton")
+                                    .tab_index(100)
+                                    .focus(|style| style.border_color(PRIMARY_HOVER))
+                                    .on_click(
                                         cx.listener(|this, _, _, cx| this.close_group_form(cx)),
                                     )
                                     .child("×"),
@@ -139,6 +140,16 @@ impl TunnelMateApp {
                             .flex()
                             .flex_col()
                             .gap(px(13.0))
+                            .when_some(
+                                form.validation_error
+                                    .clone()
+                                    .filter(|_| form.name.read(cx).value().trim().is_empty()),
+                                |body, error| {
+                                    body.child(
+                                        div().text_size(px(12.0)).text_color(DANGER).child(error),
+                                    )
+                                },
+                            )
                             .child(Self::required_form_field(
                                 self.language.pick("名称", "Name"),
                                 form.name.clone(),
@@ -162,14 +173,15 @@ impl TunnelMateApp {
                                             .rounded(px(8.0))
                                             .border_1()
                                             .border_color(BORDER)
-                                            .text_size(px(11.0))
+                                            .text_size(px(12.0))
                                             .cursor_pointer()
-                                            .on_mouse_up(
-                                                MouseButton::Left,
-                                                cx.listener(|this, _, _, cx| {
-                                                    this.close_group_form(cx)
-                                                }),
-                                            )
+                                            .id("cancel-group-form")
+                                            .key_context("TunnelButton")
+                                            .tab_index(0)
+                                            .focus(|style| style.border_color(PRIMARY_HOVER))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.close_group_form(cx)
+                                            }))
                                             .child(self.language.pick("取消", "Cancel")),
                                     )
                                     .child(
@@ -180,10 +192,13 @@ impl TunnelMateApp {
                                             .items_center()
                                             .rounded(px(8.0))
                                             .bg(PRIMARY)
-                                            .text_size(px(11.0))
+                                            .text_size(px(12.0))
                                             .cursor_pointer()
-                                            .on_mouse_up(
-                                                MouseButton::Left,
+                                            .id("save-group")
+                                            .key_context("TunnelButton")
+                                            .tab_index(0)
+                                            .focus(|style| style.border_color(PRIMARY_HOVER))
+                                            .on_click(
                                                 cx.listener(|this, _, _, cx| this.save_group(cx)),
                                             )
                                             .child(self.language.pick("保存", "Save")),

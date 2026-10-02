@@ -23,11 +23,12 @@ impl TunnelMateApp {
                 div()
                     .flex()
                     .flex_col()
-                    .w(px(440.0))
+                    .w(px(460.0))
+                    .max_w(relative(0.94))
                     .rounded(px(14.0))
                     .border_1()
                     .border_color(BORDER)
-                    .bg(color(0x171d29))
+                    .bg(SURFACE)
                     .p(px(22.0))
                     .child(
                         div()
@@ -62,12 +63,13 @@ impl TunnelMateApp {
                                     .text_size(px(12.0))
                                     .text_color(TEXT)
                                     .cursor_pointer()
-                                    .on_mouse_up(
-                                        MouseButton::Left,
-                                        cx.listener(|this, _, _, cx| {
-                                            this.cancel_save_confirmation(cx)
-                                        }),
-                                    )
+                                    .id("cancel-reconnect")
+                                    .key_context("TunnelButton")
+                                    .tab_index(0)
+                                    .focus(|style| style.border_color(PRIMARY_HOVER))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.cancel_save_confirmation(cx)
+                                    }))
                                     .child(self.language.pick("取消", "Cancel")),
                             )
                             .child(
@@ -81,12 +83,13 @@ impl TunnelMateApp {
                                     .text_size(px(12.0))
                                     .text_color(PRIMARY_TEXT)
                                     .cursor_pointer()
-                                    .on_mouse_up(
-                                        MouseButton::Left,
-                                        cx.listener(|this, _, _, cx| {
-                                            this.confirm_save_and_restart(cx)
-                                        }),
-                                    )
+                                    .id("confirm-reconnect")
+                                    .key_context("TunnelButton")
+                                    .tab_index(0)
+                                    .focus(|style| style.border_color(PRIMARY_HOVER))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.confirm_save_and_restart(cx)
+                                    }))
                                     .child(self.language.pick("保存并重连", "Save and reconnect")),
                             ),
                     ),
@@ -131,11 +134,12 @@ impl TunnelMateApp {
                 div()
                     .flex()
                     .flex_col()
-                    .w(px(440.0))
+                    .w(px(460.0))
+                    .max_w(relative(0.94))
                     .rounded(px(14.0))
                     .border_1()
                     .border_color(BORDER)
-                    .bg(color(0x171d29))
+                    .bg(SURFACE)
                     .p(px(22.0))
                     .child(
                         div()
@@ -170,12 +174,13 @@ impl TunnelMateApp {
                                     .text_size(px(12.0))
                                     .text_color(TEXT)
                                     .cursor_pointer()
-                                    .on_mouse_up(
-                                        MouseButton::Left,
-                                        cx.listener(|this, _, _, cx| {
-                                            this.cancel_delete_confirmation(cx)
-                                        }),
-                                    )
+                                    .id("cancel-delete-tunnel")
+                                    .key_context("TunnelButton")
+                                    .tab_index(0)
+                                    .focus(|style| style.border_color(PRIMARY_HOVER))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.cancel_delete_confirmation(cx)
+                                    }))
                                     .child(self.language.pick("取消", "Cancel")),
                             )
                             .child(
@@ -192,8 +197,11 @@ impl TunnelMateApp {
                                     .text_color(DANGER)
                                     .cursor_pointer()
                                     .hover(|style| style.bg(glass(0xdc747c, 0.24)))
-                                    .on_mouse_up(
-                                        MouseButton::Left,
+                                    .id("confirm-delete-tunnel")
+                                    .key_context("TunnelButton")
+                                    .tab_index(0)
+                                    .focus(|style| style.border_color(PRIMARY_HOVER))
+                                    .on_click(
                                         cx.listener(|this, _, _, cx| {
                                             this.confirm_delete_tunnel(cx)
                                         }),
@@ -249,11 +257,12 @@ impl TunnelMateApp {
                 div()
                     .flex()
                     .flex_col()
-                    .w(px(440.0))
+                    .w(px(460.0))
+                    .max_w(relative(0.94))
                     .rounded(px(14.0))
                     .border_1()
                     .border_color(BORDER)
-                    .bg(color(0x171d29))
+                    .bg(SURFACE)
                     .p(px(22.0))
                     .child(
                         div()
@@ -288,12 +297,13 @@ impl TunnelMateApp {
                                     .text_size(px(12.0))
                                     .text_color(TEXT)
                                     .cursor_pointer()
-                                    .on_mouse_up(
-                                        MouseButton::Left,
-                                        cx.listener(|this, _, _, cx| {
-                                            this.cancel_group_delete_confirmation(cx)
-                                        }),
-                                    )
+                                    .id("cancel-delete-group")
+                                    .key_context("TunnelButton")
+                                    .tab_index(0)
+                                    .focus(|style| style.border_color(PRIMARY_HOVER))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.cancel_group_delete_confirmation(cx)
+                                    }))
                                     .child(self.language.pick("取消", "Cancel")),
                             )
                             .child(
@@ -310,12 +320,13 @@ impl TunnelMateApp {
                                     .text_color(DANGER)
                                     .cursor_pointer()
                                     .hover(|style| style.bg(glass(0xdc747c, 0.24)))
-                                    .on_mouse_up(
-                                        MouseButton::Left,
-                                        cx.listener(|this, _, _, cx| {
-                                            this.confirm_delete_current_group(cx)
-                                        }),
-                                    )
+                                    .id("confirm-delete-group")
+                                    .key_context("TunnelButton")
+                                    .tab_index(0)
+                                    .focus(|style| style.border_color(PRIMARY_HOVER))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.confirm_delete_current_group(cx)
+                                    }))
                                     .child(self.language.pick("删除分组", "Delete group")),
                             ),
                     ),

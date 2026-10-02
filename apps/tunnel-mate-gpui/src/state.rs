@@ -16,7 +16,11 @@ pub(crate) enum AppMessage {
         tunnel_name: String,
         message: String,
     },
-    Diagnostics(Vec<DiagnosticStep>),
+    Diagnostics {
+        request_id: u64,
+        tunnel_id: String,
+        steps: Vec<DiagnosticStep>,
+    },
     ImportSelected(AppConfig),
     ImportFailed(String),
     ConfigImported(AppConfig),
@@ -54,6 +58,40 @@ pub(crate) struct AppNotice {
     pub(crate) message: SharedString,
     pub(crate) kind: NoticeKind,
     pub(crate) tunnel_id: Option<String>,
+}
+
+pub(crate) struct DiagnosticState {
+    pub(crate) request_id: u64,
+    pub(crate) tunnel_id: String,
+    pub(crate) tunnel_name: String,
+    pub(crate) address: String,
+    pub(crate) steps: Option<Vec<DiagnosticStep>>,
+    pub(crate) copied: bool,
+    pub(crate) task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl DiagnosticState {
+    pub(crate) fn complete(
+        &mut self,
+        request_id: u64,
+        tunnel_id: &str,
+        steps: Vec<DiagnosticStep>,
+    ) -> bool {
+        if self.request_id != request_id || self.tunnel_id != tunnel_id {
+            return false;
+        }
+        self.steps = Some(steps);
+        self.task.take();
+        true
+    }
+}
+
+impl Drop for DiagnosticState {
+    fn drop(&mut self) {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+    }
 }
 
 impl ActivityEvents {
@@ -140,6 +178,8 @@ pub(crate) struct TunnelForm {
     pub(crate) validation_error: Option<SharedString>,
     pub(crate) kind: ForwardKind,
     pub(crate) advanced: bool,
+    pub(crate) authentication_expanded: bool,
+    pub(crate) scroll: gpui::ScrollHandle,
     pub(crate) start_after_save: bool,
     pub(crate) auto_reconnect: bool,
     pub(crate) start_with_app: bool,
@@ -170,6 +210,8 @@ pub(crate) struct TunnelForm {
 }
 
 pub(crate) struct SettingsForm {
+    pub(crate) scroll: gpui::ScrollHandle,
+    pub(crate) validation_error: Option<SharedString>,
     pub(crate) launch_on_startup: bool,
     pub(crate) start_minimized: bool,
     pub(crate) close_to_tray: bool,
@@ -179,6 +221,7 @@ pub(crate) struct SettingsForm {
 }
 
 pub(crate) struct GroupForm {
+    pub(crate) validation_error: Option<SharedString>,
     pub(crate) editing_id: Option<String>,
     pub(crate) name: Entity<TextInput>,
     pub(crate) description: Entity<TextInput>,
@@ -241,11 +284,14 @@ impl TunnelForm {
             host: "127.0.0.1".into(),
             port: 80,
         });
-        Self {
+        let form = Self {
             editing_id: tunnel.map(|tunnel| tunnel.id.clone()),
             validation_error: None,
             kind,
             advanced: false,
+            authentication_expanded: tunnel
+                .is_some_and(|t| t.ssh_identity_file.is_some() || t.ssh_password.is_some()),
+            scroll: gpui::ScrollHandle::new(),
             start_after_save: tunnel.is_none(),
             auto_reconnect: tunnel.map(|tunnel| tunnel.auto_reconnect).unwrap_or(true),
             start_with_app: tunnel.map(|tunnel| tunnel.start_with_app).unwrap_or(true),
@@ -364,7 +410,37 @@ impl TunnelForm {
             ),
             ssh_hosts: Vec::new(),
             ssh_picker_target: None,
+        };
+        for input in [
+            &form.name,
+            &form.description,
+            &form.ssh_host,
+            &form.ssh_port,
+            &form.ssh_user,
+            &form.identity_file,
+            &form.ssh_password,
+            &form.listen_host,
+            &form.listen_port,
+            &form.target_host,
+            &form.target_port,
+            &form.retry_count,
+            &form.retry_interval,
+            &form.jump_host,
+            &form.jump_port,
+            &form.jump_user,
+            &form.jump_identity_file,
+            &form.jump_password,
+        ] {
+            input.update(cx, |input, _| input.set_scroll_parent(form.scroll.clone()));
+            cx.subscribe(input, |this, _, _: &text_input::InputChanged, cx| {
+                if let Some(form) = &mut this.form {
+                    form.validation_error = None;
+                }
+                cx.notify();
+            })
+            .detach();
         }
+        form
     }
 }
 
@@ -384,7 +460,14 @@ pub(crate) struct TunnelMateApp {
     pub(crate) pending_starts: HashSet<String>,
     pub(crate) events: Arc<ActivityEvents>,
     pub(crate) activity_scroll: UniformListScrollHandle,
-    pub(crate) diagnostics: Option<Vec<DiagnosticStep>>,
+    pub(crate) diagnostics: Option<DiagnosticState>,
+    pub(crate) next_diagnostic_id: u64,
+    pub(crate) tunnel_scroll: UniformListScrollHandle,
+    pub(crate) root_focus: gpui::FocusHandle,
+    pub(crate) modal_focus: gpui::FocusHandle,
+    pub(crate) return_focus: Option<gpui::FocusHandle>,
+    pub(crate) active_modal: Option<ModalLayer>,
+    pub(crate) pending_field_focus: Option<Entity<TextInput>>,
     pub(crate) settings_form: Option<SettingsForm>,
     pub(crate) pending_import: Option<AppConfig>,
     pub(crate) group_form: Option<GroupForm>,
@@ -403,6 +486,64 @@ pub(crate) struct TunnelMateApp {
     #[cfg(target_os = "macos")]
     pub(crate) _window_layout_observer: Option<WindowLayoutObserver>,
     pub(crate) _event_task: Task<()>,
-    pub(crate) _keystroke_subscription: Subscription,
     pub(crate) _tray: Option<tray_icon::TrayIcon>,
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+
+    fn running(request_id: u64, tunnel_id: &str) -> DiagnosticState {
+        DiagnosticState {
+            request_id,
+            tunnel_id: tunnel_id.into(),
+            tunnel_name: "Test tunnel".into(),
+            address: "127.0.0.1:22".into(),
+            steps: None,
+            copied: false,
+            task: None,
+        }
+    }
+
+    #[test]
+    fn earlier_diagnostic_cannot_replace_a_new_check() {
+        let mut current = running(2, "tunnel-b");
+        assert!(!current.complete(1, "tunnel-b", vec![]));
+        assert!(!current.complete(2, "tunnel-a", vec![]));
+        assert!(current.steps.is_none());
+        assert!(current.complete(2, "tunnel-b", vec![]));
+        assert!(current.steps.is_some());
+    }
+
+    #[test]
+    fn closing_diagnostics_cancels_the_in_flight_check() {
+        struct SignalOnDrop(Option<tokio::sync::oneshot::Sender<()>>);
+        impl Drop for SignalOnDrop {
+            fn drop(&mut self) {
+                if let Some(sender) = self.0.take() {
+                    let _ = sender.send(());
+                }
+            }
+        }
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (started, ready) = tokio::sync::oneshot::channel();
+            let (cancelled, finished) = tokio::sync::oneshot::channel();
+            let mut state = running(1, "tunnel-a");
+            state.task = Some(tokio::spawn(async move {
+                let _guard = SignalOnDrop(Some(cancelled));
+                let _ = started.send(());
+                std::future::pending::<()>().await;
+            }));
+            ready.await.unwrap();
+            drop(state);
+            tokio::time::timeout(Duration::from_secs(1), finished)
+                .await
+                .unwrap()
+                .unwrap();
+        });
+    }
 }

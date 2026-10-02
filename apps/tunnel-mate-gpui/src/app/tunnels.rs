@@ -28,9 +28,13 @@ impl TunnelMateApp {
                     .parse::<u16>()
                     .map_or(true, |port| port == 0));
         let mut missing = Vec::new();
+        let mut first_missing = None;
         let mut require = |input: &Entity<TextInput>, label: &'static str| {
-            if input.read(cx).value().trim().is_empty() {
+            let empty = input.read(cx).value().trim().is_empty();
+            input.update(cx, |input, cx| input.set_invalid(empty, cx));
+            if empty {
                 missing.push(label);
+                first_missing.get_or_insert_with(|| input.clone());
             }
         };
         require(&form.name, language.pick("名称", "Name"));
@@ -92,13 +96,15 @@ impl TunnelMateApp {
             };
             if let Some(form) = &mut self.form {
                 form.validation_error = Some(message.into());
-                form.advanced |= advanced_has_error;
+                form.advanced |= advanced_has_error || manual_jump;
             }
+            self.pending_field_focus = first_missing;
             self.clear_notice();
             cx.notify();
             return;
         }
 
+        let invalid_number = std::cell::RefCell::new(None);
         let parse_port = |input: &Entity<TextInput>, label: &str| -> Result<u16, String> {
             input
                 .read(cx)
@@ -108,6 +114,7 @@ impl TunnelMateApp {
                 .ok()
                 .filter(|port| *port > 0)
                 .ok_or_else(|| {
+                    *invalid_number.borrow_mut() = Some(input.clone());
                     if language == Language::Zh {
                         format!("{label}必须是 1–65535 的端口")
                     } else {
@@ -117,6 +124,7 @@ impl TunnelMateApp {
         };
         let parse_u32 = |input: &Entity<TextInput>, label: &str| -> Result<u32, String> {
             input.read(cx).value().trim().parse::<u32>().map_err(|_| {
+                *invalid_number.borrow_mut() = Some(input.clone());
                 if language == Language::Zh {
                     format!("{label}必须是非负整数")
                 } else {
@@ -211,6 +219,10 @@ impl TunnelMateApp {
         })();
         match result {
             Err(error) => {
+                if let Some(input) = invalid_number.into_inner() {
+                    input.update(cx, |input, cx| input.set_invalid(true, cx));
+                    self.pending_field_focus = Some(input);
+                }
                 if let Some(form) = &mut self.form {
                     form.validation_error = Some(error.into());
                     form.advanced |= advanced_has_error;
@@ -229,6 +241,9 @@ impl TunnelMateApp {
                 if existing.is_some_and(|existing| existing == &tunnel) {
                     self.form = None;
                     self.clear_notice();
+                    if start_after_save && !self.is_active(&tunnel.id) {
+                        self.request_toggle(tunnel.id, cx);
+                    }
                     cx.notify();
                     return;
                 }

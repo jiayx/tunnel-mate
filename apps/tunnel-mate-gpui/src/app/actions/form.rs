@@ -61,10 +61,19 @@ impl TunnelMateApp {
         let name_placeholder = self.language.pick("例如：生产环境", "e.g. Production");
         let description_placeholder = self.language.pick("说明（可选）", "Description (optional)");
         self.group_form = Some(GroupForm {
+            validation_error: None,
             editing_id: None,
             name: cx.new(|cx| TextInput::new(cx, name_placeholder, "")),
             description: cx.new(|cx| TextInput::new(cx, description_placeholder, "")),
         });
+        let name = self.group_form.as_ref().unwrap().name.clone();
+        cx.subscribe(&name, |this, _, _: &text_input::InputChanged, cx| {
+            if let Some(form) = &mut this.group_form {
+                form.validation_error = None;
+            }
+            cx.notify();
+        })
+        .detach();
         cx.notify();
     }
 
@@ -78,6 +87,7 @@ impl TunnelMateApp {
         let name_placeholder = self.language.pick("分组名称", "Group name");
         let description_placeholder = self.language.pick("说明（可选）", "Description (optional)");
         self.group_form = Some(GroupForm {
+            validation_error: None,
             editing_id: Some(group.id.clone()),
             name: cx.new(|cx| TextInput::new(cx, name_placeholder, group.name.clone())),
             description: cx.new(|cx| {
@@ -88,6 +98,14 @@ impl TunnelMateApp {
                 )
             }),
         });
+        let name = self.group_form.as_ref().unwrap().name.clone();
+        cx.subscribe(&name, |this, _, _: &text_input::InputChanged, cx| {
+            if let Some(form) = &mut this.group_form {
+                form.validation_error = None;
+            }
+            cx.notify();
+        })
+        .detach();
         cx.notify();
     }
 
@@ -100,9 +118,13 @@ impl TunnelMateApp {
         let Some(form) = &self.group_form else { return };
         let name = form.name.read(cx).value();
         if name.trim().is_empty() {
-            self.show_persistent_notice(
+            let input = form.name.clone();
+            input.update(cx, |input, cx| input.set_invalid(true, cx));
+            self.pending_field_focus = Some(input);
+            self.group_form.as_mut().unwrap().validation_error = Some(
                 self.language
-                    .pick("分组名称不能为空", "Group name cannot be empty"),
+                    .pick("分组名称不能为空", "Group name cannot be empty")
+                    .into(),
             );
             cx.notify();
             return;

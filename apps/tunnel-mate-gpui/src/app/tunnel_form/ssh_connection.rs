@@ -9,138 +9,139 @@ impl TunnelMateApp {
         div()
             .flex()
             .flex_col()
-            .gap(px(10.0))
-            .p(px(12.0))
-            .rounded(px(10.0))
-            .border_1()
-            .border_color(BORDER)
-            .bg(APP_BG)
+            .gap(px(12.0))
             .child(
                 div()
                     .flex()
                     .items_center()
                     .justify_between()
+                    .child(section_heading(
+                        self.language.pick("SSH 服务器", "SSH server"),
+                    ))
                     .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(3.0))
-                            .child(
-                                div()
-                                    .text_size(px(12.0))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(TEXT)
-                                    .child(self.language.pick("SSH 连接", "SSH connection")),
-                            )
-                            .child(div().text_size(px(10.0)).text_color(MUTED).child(
-                                self.language.pick(
-                                    "手动填写，或从 SSH config 自动带入下方信息",
-                                    "Enter details manually or fill them from SSH config",
-                                ),
-                            )),
-                    )
-                    .child(
-                        div()
-                            .h(px(30.0))
-                            .px(px(10.0))
-                            .flex()
-                            .items_center()
-                            .rounded(px(7.0))
-                            .border_1()
-                            .border_color(glass(0x075bea, 0.45))
-                            .bg(glass(0x075bea, 0.10))
-                            .text_size(px(10.0))
-                            .text_color(PRIMARY_TEXT)
-                            .cursor_pointer()
-                            .hover(|style| style.bg(glass(0x075bea, 0.16)))
-                            .on_mouse_up(
-                                MouseButton::Left,
-                                cx.listener(|this, _, _, cx| this.open_primary_ssh_hosts(cx)),
-                            )
-                            .child(
-                                self.language
-                                    .pick("从 SSH config 选择…", "Choose from SSH config…"),
-                            ),
+                        button(
+                            "choose-ssh-config",
+                            self.language
+                                .pick("从 SSH config 选择", "Choose from SSH config"),
+                        )
+                        .h(px(28.0))
+                        .px(px(8.0))
+                        .border_color(rgba(0x00000000))
+                        .bg(rgba(0x00000000))
+                        .text_color(color(0xa8c8ff))
+                        .on_click(cx.listener(|this, _, _, cx| this.open_primary_ssh_hosts(cx))),
                     ),
             )
             .child(
                 div()
                     .flex()
-                    .gap(px(10.0))
-                    .child(div().flex_grow(1.0).child(Self::required_form_field(
+                    .gap(px(12.0))
+                    .child(div().flex_1().min_w_0().child(Self::required_form_field(
                         self.language.pick("主机", "Host"),
                         form.ssh_host.clone(),
                     )))
-                    .child(div().w(px(100.0)).child(Self::required_form_field(
-                        self.language.pick("端口", "Port"),
-                        form.ssh_port.clone(),
-                    )))
-                    .child(div().w(px(150.0)).child(Self::required_form_field(
-                        self.language.pick("用户", "User"),
-                        form.ssh_user.clone(),
-                    ))),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(3.0))
-                    .pt(px(10.0))
-                    .border_t_1()
-                    .border_color(BORDER)
                     .child(
                         div()
-                            .text_size(px(11.0))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(TEXT)
-                            .child(
-                                self.language
-                                    .pick("身份验证（可选）", "Authentication (optional)"),
-                            ),
+                            .w(px(84.0))
+                            .flex_none()
+                            .child(Self::required_form_field(
+                                self.language.pick("端口", "Port"),
+                                form.ssh_port.clone(),
+                            )),
                     )
                     .child(
                         div()
-                            .text_size(px(10.0))
-                            .text_color(MUTED)
-                            .child(self.language.pick(
-                                "留空时依次尝试 SSH Agent 和默认私钥",
-                                "Leave blank to try SSH Agent and default keys",
+                            .w(px(140.0))
+                            .flex_none()
+                            .child(Self::required_form_field(
+                                self.language.pick("用户", "User"),
+                                form.ssh_user.clone(),
                             )),
                     ),
             )
             .child(
                 div()
+                    .id("authentication-options")
+                    .key_context("TunnelButton")
+                    .tab_index(0)
                     .flex()
-                    .items_end()
+                    .items_center()
                     .gap(px(8.0))
-                    .child(div().flex_grow(1.0).child(Self::form_field(
-                        self.language.pick("私钥文件", "Private key"),
-                        form.identity_file.clone(),
-                    )))
-                    .child(
-                        div()
-                            .h(px(38.0))
-                            .px(px(11.0))
-                            .flex()
-                            .items_center()
-                            .rounded(px(8.0))
-                            .border_1()
-                            .border_color(BORDER)
-                            .text_size(px(10.0))
-                            .text_color(MUTED)
-                            .cursor_pointer()
-                            .on_mouse_up(
-                                MouseButton::Left,
-                                cx.listener(|this, _, _, cx| {
-                                    this.select_private_key(PrivateKeyTarget::Primary, cx)
-                                }),
-                            )
-                            .child(self.language.pick("选择…", "Choose…")),
-                    ),
+                    .py(px(6.0))
+                    .rounded(px(6.0))
+                    .text_size(px(12.0))
+                    .text_color(MUTED)
+                    .cursor_pointer()
+                    .focus(|style| style.text_color(TEXT))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if let Some(form) = &mut this.form {
+                            form.authentication_expanded = !form.authentication_expanded;
+                        }
+                        cx.notify();
+                    }))
+                    .child(Self::disclosure_chevron(
+                        form.authentication_expanded,
+                        "▾",
+                        "▸",
+                    ))
+                    .child(self.language.pick("身份验证", "Authentication"))
+                    .child(div().flex_1())
+                    .child(if form.authentication_expanded {
+                        self.language.pick("收起", "Collapse")
+                    } else if !form.identity_file.read(cx).value().is_empty()
+                        || !form.ssh_password.read(cx).value().is_empty()
+                    {
+                        self.language
+                            .pick("已配置私钥或密码", "Custom key or password")
+                    } else {
+                        self.language
+                            .pick("SSH Agent / 默认私钥", "SSH Agent / default keys")
+                    }),
             )
-            .child(Self::form_field(
-                self.language.pick("SSH 密码", "SSH password"),
-                form.ssh_password.clone(),
-            ))
+            .when(form.authentication_expanded, |section| {
+                section.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(12.0))
+                        .p(px(14.0))
+                        .rounded(px(10.0))
+                        .bg(APP_BG)
+                        .border_1()
+                        .border_color(BORDER_SOFT)
+                        .child(div().text_size(px(12.0)).text_color(MUTED).child(
+                            self.language.pick(
+                                "留空时自动尝试 SSH Agent 和默认私钥",
+                                "Leave blank to try SSH Agent and default keys",
+                            ),
+                        ))
+                        .child(
+                            div()
+                                .flex()
+                                .items_end()
+                                .gap(px(8.0))
+                                .child(div().flex_1().min_w_0().child(Self::form_field(
+                                    self.language.pick("私钥文件", "Private key"),
+                                    form.identity_file.clone(),
+                                )))
+                                .child(
+                                    button(
+                                        "choose-private-key",
+                                        self.language.pick("选择…", "Choose…"),
+                                    )
+                                    .h(px(40.0))
+                                    .on_click(cx.listener(
+                                        |this, _, _, cx| {
+                                            this.select_private_key(PrivateKeyTarget::Primary, cx)
+                                        },
+                                    )),
+                                ),
+                        )
+                        .child(Self::form_field(
+                            self.language.pick("SSH 密码", "SSH password"),
+                            form.ssh_password.clone(),
+                        )),
+                )
+            })
     }
 }

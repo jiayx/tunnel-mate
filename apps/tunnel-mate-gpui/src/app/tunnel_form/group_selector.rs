@@ -34,6 +34,9 @@ impl TunnelMateApp {
         group_options = group_options.child(
             div()
                 .id("group-option-ungrouped")
+                .key_context("TunnelButton")
+                .tab_index(0)
+                .focus(|style| style.border_color(PRIMARY))
                 .h(px(32.0))
                 .px(px(9.0))
                 .flex()
@@ -51,7 +54,7 @@ impl TunnelMateApp {
                 } else {
                     rgba(0x00000000)
                 })
-                .text_size(px(10.0))
+                .text_size(px(12.0))
                 .text_color(if ungrouped_selected { TEXT } else { MUTED })
                 .cursor_pointer()
                 .hover(|style| {
@@ -65,13 +68,10 @@ impl TunnelMateApp {
                         .text_color(TEXT)
                 })
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.select_form_group(None, cx);
-                    }),
-                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.select_form_group(None, cx);
+                }))
                 .child(self.language.pick("未分组", "Ungrouped"))
                 .child(if ungrouped_selected { "✓" } else { "" }),
         );
@@ -81,6 +81,9 @@ impl TunnelMateApp {
             group_options = group_options.child(
                 div()
                     .id(("group-option", index))
+                    .key_context("TunnelButton")
+                    .tab_index(0)
+                    .focus(|style| style.border_color(PRIMARY))
                     .h(px(32.0))
                     .px(px(9.0))
                     .flex()
@@ -98,7 +101,7 @@ impl TunnelMateApp {
                     } else {
                         rgba(0x00000000)
                     })
-                    .text_size(px(10.0))
+                    .text_size(px(12.0))
                     .text_color(if selected { TEXT } else { MUTED })
                     .cursor_pointer()
                     .hover(|style| {
@@ -112,13 +115,10 @@ impl TunnelMateApp {
                             .text_color(TEXT)
                     })
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_mouse_up(
-                        MouseButton::Left,
-                        cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.select_form_group(Some(group_id.clone()), cx)
-                        }),
-                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.select_form_group(Some(group_id.clone()), cx)
+                    }))
                     .child(group.name.clone())
                     .child(if selected { "✓" } else { "" }),
             );
@@ -126,9 +126,13 @@ impl TunnelMateApp {
         div()
             .relative()
             .w(px(220.0))
-            .h(px(34.0))
+            .h(px(40.0))
             .child(
                 div()
+                    .id("form-group-selector")
+                    .key_context("TunnelButton")
+                    .tab_index(0)
+                    .focus(|style| style.border_color(PRIMARY))
                     .w_full()
                     .h_full()
                     .px(px(11.0))
@@ -143,17 +147,14 @@ impl TunnelMateApp {
                         BORDER
                     })
                     .bg(APP_BG)
-                    .text_size(px(10.0))
+                    .text_size(px(12.0))
                     .text_color(TEXT)
                     .cursor_pointer()
                     .hover(|style| style.bg(SURFACE_HOVER))
-                    .on_mouse_up(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.toggle_form_group_menu(cx);
-                        }),
-                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.toggle_form_group_menu(cx);
+                    }))
                     .child(group_name.to_string())
                     .child(Self::disclosure_chevron(form.group_menu_open, "▴", "▾")),
             )

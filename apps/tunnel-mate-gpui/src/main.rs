@@ -4,10 +4,14 @@
 )]
 
 mod i18n;
+mod keyboard;
 #[cfg(target_os = "macos")]
 mod single_instance;
 mod system;
 mod text_input;
+mod ui;
+use keyboard::{modal_layer, ModalLayer};
+use ui::{button, close_button, endpoint_label, icon, primary_button, section_heading, toggle};
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
@@ -17,10 +21,10 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use gpui::{
-    actions, anchored, deferred, div, img, point, prelude::*, px, relative, rgb, rgba, size,
+    actions, anchored, deferred, div, img, point, prelude::*, px, relative, rgba, size,
     uniform_list, Anchor, AnchoredPositionMode, App, Bounds, ClipboardItem, Context, Entity,
     FontWeight, IntoElement, KeyBinding, MouseButton, PathPromptOptions, RenderImage, Rgba,
-    SharedString, Subscription, Task, UniformListScrollHandle, Window, WindowAppearance,
+    SharedString, Task, UniformListScrollHandle, Window, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowOptions,
 };
 #[cfg(target_os = "macos")]
@@ -106,17 +110,17 @@ fn progress_notice_clears_on_status(
         }
 }
 
-const APP_BG: Rgba = glass(0x0b1019, 0.90);
-const SIDEBAR_BG: Rgba = glass(0x101622, 0.82);
-const SURFACE: Rgba = glass(0x171d29, 0.90);
-const SURFACE_HOVER: Rgba = glass(0x202a3a, 0.90);
-const BORDER: Rgba = color(0x292d33);
-const BORDER_SOFT: Rgba = color(0x20242a);
-const TEXT: Rgba = color(0xf1f0ec);
-const MUTED: Rgba = color(0x8b9099);
-const MUTED_DARK: Rgba = color(0x616770);
-const PRIMARY: Rgba = color(0x075bea);
-const PRIMARY_HOVER: Rgba = color(0x2f76f6);
+const APP_BG: Rgba = color(0x10141c);
+const SIDEBAR_BG: Rgba = glass(0x151b26, 0.94);
+const SURFACE: Rgba = color(0x1a2230);
+const SURFACE_HOVER: Rgba = color(0x253249);
+const BORDER: Rgba = color(0x334157);
+const BORDER_SOFT: Rgba = color(0x252f40);
+const TEXT: Rgba = color(0xeaf0f9);
+const MUTED: Rgba = color(0xa7b5cb);
+const MUTED_DARK: Rgba = color(0x8595ae);
+const PRIMARY: Rgba = color(0x2764e7);
+const PRIMARY_HOVER: Rgba = color(0x3979f4);
 const PRIMARY_TEXT: Rgba = color(0xffffff);
 const SUCCESS: Rgba = color(0x63cda7);
 const WARNING: Rgba = color(0xd2a85e);
@@ -134,6 +138,10 @@ actions!(
         ZoomWindow,
         ToggleFullScreen,
         BringAllToFront,
+        FocusNext,
+        FocusPrevious,
+        Dismiss,
+        SubmitPrimary,
     ]
 );
 
@@ -236,7 +244,12 @@ mod tunnels;
 mod workspace;
 
 impl Render for TunnelMateApp {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_modal_focus(window, cx);
+        if let Some(input) = self.pending_field_focus.take() {
+            window.focus(&gpui::Focusable::focus_handle(input.read(cx), cx), cx);
+        }
+        let active = self.active_modal;
         let ssh_picker_open = self
             .form
             .as_ref()
@@ -244,6 +257,17 @@ impl Render for TunnelMateApp {
         let root = div()
             .relative()
             .key_context("TunnelMate")
+            .track_focus(&self.root_focus)
+            .on_action(
+                cx.listener(|this, _: &FocusNext, window, cx| this.move_focus(false, window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &FocusPrevious, window, cx| {
+                    this.move_focus(true, window, cx)
+                }),
+            )
+            .on_action(cx.listener(|this, _: &Dismiss, _, cx| this.dismiss(cx)))
+            .on_action(cx.listener(|this, _: &SubmitPrimary, _, cx| this.submit_primary(cx)))
             .flex()
             .size_full()
             .pt(window_content_top_padding(self))
@@ -251,40 +275,97 @@ impl Render for TunnelMateApp {
             .text_color(TEXT);
         root.child(self.render_sidebar(cx))
             .child(self.render_workspace(cx))
+            .when(self.form.is_some(), |root| {
+                root.child(modal_layer(
+                    ModalLayer::Tunnel,
+                    active,
+                    &self.modal_focus,
+                    self.render_create_sheet(cx),
+                ))
+            })
+            .when(ssh_picker_open, |root| {
+                root.child(modal_layer(
+                    ModalLayer::SshPicker,
+                    active,
+                    &self.modal_focus,
+                    self.render_ssh_host_picker(cx),
+                ))
+            })
+            .when(self.save_confirmation.is_some(), |root| {
+                root.child(modal_layer(
+                    ModalLayer::Save,
+                    active,
+                    &self.modal_focus,
+                    self.render_save_confirmation(cx),
+                ))
+            })
+            .when(self.delete_confirmation.is_some(), |root| {
+                root.child(modal_layer(
+                    ModalLayer::Delete,
+                    active,
+                    &self.modal_focus,
+                    self.render_delete_confirmation(cx),
+                ))
+            })
+            .when(self.group_delete_confirmation.is_some(), |root| {
+                root.child(modal_layer(
+                    ModalLayer::DeleteGroup,
+                    active,
+                    &self.modal_focus,
+                    self.render_group_delete_confirmation(cx),
+                ))
+            })
+            .when(self.diagnostics.is_some(), |root| {
+                root.child(modal_layer(
+                    ModalLayer::Diagnostics,
+                    active,
+                    &self.modal_focus,
+                    self.render_diagnostics(cx),
+                ))
+            })
+            .when(self.group_form.is_some(), |root| {
+                root.child(modal_layer(
+                    ModalLayer::Group,
+                    active,
+                    &self.modal_focus,
+                    self.render_group_form(cx),
+                ))
+            })
+            .when(self.settings_form.is_some(), |root| {
+                root.child(modal_layer(
+                    ModalLayer::Settings,
+                    active,
+                    &self.modal_focus,
+                    self.render_settings(cx),
+                ))
+            })
+            .when(self.pending_import.is_some(), |root| {
+                root.child(modal_layer(
+                    ModalLayer::Import,
+                    active,
+                    &self.modal_focus,
+                    self.render_import_confirmation(cx),
+                ))
+            })
+            .when(self.auth_prompt.is_some(), |root| {
+                root.child(modal_layer(
+                    ModalLayer::Auth,
+                    active,
+                    &self.modal_focus,
+                    self.render_auth_prompt(cx),
+                ))
+            })
+            .when(self.about_open, |root| {
+                root.child(modal_layer(
+                    ModalLayer::About,
+                    active,
+                    &self.modal_focus,
+                    self.render_about(cx),
+                ))
+            })
             .when(self.notice.is_some(), |root| {
                 root.child(self.render_notice(cx))
             })
-            .when(self.form.is_some(), |root| {
-                root.child(self.render_create_sheet(cx))
-            })
-            .when(ssh_picker_open, |root| {
-                root.child(self.render_ssh_host_picker(cx))
-            })
-            .when(self.save_confirmation.is_some(), |root| {
-                root.child(self.render_save_confirmation(cx))
-            })
-            .when(self.delete_confirmation.is_some(), |root| {
-                root.child(self.render_delete_confirmation(cx))
-            })
-            .when(self.group_delete_confirmation.is_some(), |root| {
-                root.child(self.render_group_delete_confirmation(cx))
-            })
-            .when(self.diagnostics.is_some(), |root| {
-                root.child(self.render_diagnostics(cx))
-            })
-            .when(self.group_form.is_some(), |root| {
-                root.child(self.render_group_form(cx))
-            })
-            .when(self.settings_form.is_some(), |root| {
-                root.child(self.render_settings(cx))
-            })
-            .when(self.pending_import.is_some(), |root| {
-                root.child(self.render_import_confirmation(cx))
-            })
-            .when(self.auth_prompt.is_some(), |root| {
-                root.child(self.render_auth_prompt(cx))
-            })
-            .when(self.about_open, |root| root.child(self.render_about(cx)))
     }
 }
 
@@ -342,7 +423,7 @@ fn main() {
     };
 
     let minimized_arg = std::env::args().any(|arg| arg == "--minimized");
-    let application = gpui_platform::application();
+    let application = gpui_platform::application().with_assets(ui::Assets);
     application.on_reopen(|cx| {
         set_dock_visible(true);
         cx.activate(true);
@@ -366,8 +447,14 @@ fn main() {
             set_dock_visible(false);
         }
         text_input::init(cx);
+        cx.bind_keys([
+            KeyBinding::new("tab", FocusNext, Some("TunnelMate")),
+            KeyBinding::new("shift-tab", FocusPrevious, Some("TunnelMate")),
+            KeyBinding::new("escape", Dismiss, Some("TunnelMate")),
+            KeyBinding::new("enter", SubmitPrimary, Some("TunnelMate && !TunnelButton")),
+        ]);
         cx.set_window_appearance(Some(WindowAppearance::Dark));
-        let window_size = size(px(920.0), px(620.0));
+        let window_size = size(px(1040.0), px(740.0));
         let bounds = cx
             .primary_display()
             .map(|display| Bounds::centered_at(display.visible_bounds().center(), window_size))

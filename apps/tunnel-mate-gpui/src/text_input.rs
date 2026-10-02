@@ -81,10 +81,17 @@ pub struct TextInput {
     last_layout: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
     masked: bool,
+    invalid: bool,
+    scroll_to_focus: bool,
+    scroll_parent: Option<gpui::ScrollHandle>,
+    horizontal_offset: Pixels,
     cursor_visible: bool,
     blink_task: Task<()>,
     focus_subscriptions: Vec<Subscription>,
 }
+
+pub struct InputChanged;
+impl gpui::EventEmitter<InputChanged> for TextInput {}
 
 impl TextInput {
     pub fn new(
@@ -95,7 +102,7 @@ impl TextInput {
         let content = value.into();
         let cursor = content.len();
         Self {
-            focus_handle: cx.focus_handle(),
+            focus_handle: cx.focus_handle().tab_stop(true).tab_index(0),
             content,
             placeholder: placeholder.into(),
             selected_range: cursor..cursor,
@@ -104,6 +111,10 @@ impl TextInput {
             last_layout: None,
             last_bounds: None,
             masked: false,
+            invalid: false,
+            scroll_to_focus: true,
+            scroll_parent: None,
+            horizontal_offset: px(0.0),
             cursor_visible: false,
             blink_task: Task::ready(()),
             focus_subscriptions: Vec::new(),
@@ -128,6 +139,18 @@ impl TextInput {
         self.content = value.into();
         self.selected_range = self.content.len()..self.content.len();
         self.marked_range = None;
+        self.invalid = false;
+        cx.emit(InputChanged);
+        cx.notify();
+    }
+
+    pub fn set_scroll_parent(&mut self, scroll: gpui::ScrollHandle) {
+        self.scroll_parent = Some(scroll);
+    }
+
+    pub fn set_invalid(&mut self, invalid: bool, cx: &mut Context<Self>) {
+        self.invalid = invalid;
+        self.scroll_to_focus |= invalid;
         cx.notify();
     }
 
@@ -304,13 +327,8 @@ impl TextInput {
         let (Some(bounds), Some(line)) = (&self.last_bounds, &self.last_layout) else {
             return 0;
         };
-        if position.x <= bounds.left() {
-            0
-        } else if position.x >= bounds.right() {
-            self.content.len()
-        } else {
-            line.closest_index_for_x(position.x - bounds.left())
-        }
+        let index = line.closest_index_for_x(position.x - bounds.left() + self.horizontal_offset);
+        clamp_range_to_content(&self.content, index..index).start
     }
 
     fn previous_boundary(&self, offset: usize) -> usize {
@@ -423,6 +441,8 @@ impl EntityInputHandler for TextInput {
         self.selected_range = cursor..cursor;
         self.marked_range = None;
         self.reset_blink(cx);
+        self.invalid = false;
+        cx.emit(InputChanged);
         cx.notify();
     }
 
@@ -454,6 +474,8 @@ impl EntityInputHandler for TextInput {
             });
         self.selected_range = clamp_range_to_content(&self.content, selected_range);
         self.reset_blink(cx);
+        self.invalid = false;
+        cx.emit(InputChanged);
         cx.notify();
     }
 
@@ -468,11 +490,11 @@ impl EntityInputHandler for TextInput {
         let range = self.range_from_utf16(&range_utf16);
         Some(Bounds::from_corners(
             point(
-                bounds.left() + layout.x_for_index(range.start),
+                bounds.left() + layout.x_for_index(range.start) - self.horizontal_offset,
                 bounds.top(),
             ),
             point(
-                bounds.left() + layout.x_for_index(range.end),
+                bounds.left() + layout.x_for_index(range.end) - self.horizontal_offset,
                 bounds.bottom(),
             ),
         ))
@@ -486,7 +508,8 @@ impl EntityInputHandler for TextInput {
     ) -> Option<usize> {
         let bounds = self.last_bounds?;
         let layout = self.last_layout.as_ref()?;
-        let index = layout.index_for_x(point.x - bounds.left())?;
+        let index = layout.index_for_x(point.x - bounds.left() + self.horizontal_offset)?;
+        let index = clamp_range_to_content(&self.content, index..index).start;
         Some(self.offset_to_utf16(index))
     }
 }
@@ -496,6 +519,7 @@ struct InputElement {
 }
 
 struct PrepaintState {
+    horizontal_offset: Pixels,
     line: Option<ShapedLine>,
     cursor: Option<PaintQuad>,
     selection: Option<PaintQuad>,
@@ -599,12 +623,28 @@ impl Element for InputElement {
             .text_system()
             .shape_line(display, font_size, &runs, None);
         let cursor_x = line.x_for_index(input.cursor_offset());
+        let width = (bounds.size.width - px(2.0)).max(px(0.0));
+        let mut horizontal_offset = if focused {
+            input
+                .horizontal_offset
+                .min((line.width - width).max(px(0.0)))
+        } else {
+            px(0.0)
+        };
+        if focused {
+            if cursor_x < horizontal_offset {
+                horizontal_offset = cursor_x;
+            } else if cursor_x > horizontal_offset + width {
+                horizontal_offset = cursor_x - width;
+            }
+        }
+        let text_left = bounds.left() - horizontal_offset;
         let (selection, cursor) = if input.selected_range.is_empty() {
             (
                 None,
                 Some(fill(
                     Bounds::new(
-                        point(bounds.left() + cursor_x, bounds.top()),
+                        point(text_left + cursor_x, bounds.top()),
                         size(px(1.5), bounds.size.height),
                     ),
                     rgba(0x075beaff),
@@ -615,11 +655,11 @@ impl Element for InputElement {
                 Some(fill(
                     Bounds::from_corners(
                         point(
-                            bounds.left() + line.x_for_index(input.selected_range.start),
+                            text_left + line.x_for_index(input.selected_range.start),
                             bounds.top(),
                         ),
                         point(
-                            bounds.left() + line.x_for_index(input.selected_range.end),
+                            text_left + line.x_for_index(input.selected_range.end),
                             bounds.bottom(),
                         ),
                     ),
@@ -629,6 +669,7 @@ impl Element for InputElement {
             )
         };
         PrepaintState {
+            horizontal_offset,
             line: Some(line),
             cursor,
             selection,
@@ -651,27 +692,52 @@ impl Element for InputElement {
             ElementInputHandler::new(bounds, self.input.clone()),
             cx,
         );
-        if let Some(selection) = state.selection.take() {
-            window.paint_quad(selection);
-        }
         let line = state.line.take().expect("input line should be shaped");
-        line.paint(
-            bounds.origin,
-            window.line_height(),
-            gpui::TextAlign::Left,
-            None,
-            window,
-            cx,
-        )
-        .ok();
-        if focus.is_focused(window) && self.input.read(cx).cursor_visible {
-            if let Some(cursor) = state.cursor.take() {
-                window.paint_quad(cursor);
+        window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| {
+            if let Some(selection) = state.selection.take() {
+                window.paint_quad(selection);
             }
-        }
+            line.paint(
+                point(bounds.left() - state.horizontal_offset, bounds.top()),
+                window.line_height(),
+                gpui::TextAlign::Left,
+                None,
+                window,
+                cx,
+            )
+            .ok();
+            if focus.is_focused(window) && self.input.read(cx).cursor_visible {
+                if let Some(cursor) = state.cursor.take() {
+                    window.paint_quad(cursor);
+                }
+            }
+        });
         self.input.update(cx, |input, _| {
+            input.horizontal_offset = state.horizontal_offset;
             input.last_layout = Some(line);
             input.last_bounds = Some(bounds);
+            if input.scroll_to_focus && focus.is_focused(window) {
+                input.scroll_to_focus = false;
+                if let Some(scroll) = input.scroll_parent.clone() {
+                    let viewport = scroll.bounds();
+                    let desired = bounds.dilate(px(20.0));
+                    let delta = if desired.top() < viewport.top() {
+                        viewport.top() - desired.top()
+                    } else if desired.bottom() > viewport.bottom() {
+                        viewport.bottom() - desired.bottom()
+                    } else {
+                        px(0.0)
+                    };
+                    if delta != px(0.0) {
+                        let mut offset = scroll.offset();
+                        offset.y = (offset.y + delta).min(px(0.0));
+                        window.on_next_frame(move |window, _| {
+                            scroll.set_offset(offset);
+                            window.refresh();
+                        });
+                    }
+                }
+            }
         });
     }
 }
@@ -681,6 +747,7 @@ impl Render for TextInput {
         if self.focus_subscriptions.is_empty() {
             let focus = self.focus_handle.clone();
             let focus_subscription = cx.on_focus(&focus, window, |input, _, cx| {
+                input.scroll_to_focus = true;
                 input.start_blink(cx);
             });
             let blur_subscription = cx.on_blur(&focus, window, |input, _, cx| {
@@ -715,14 +782,16 @@ impl Render for TextInput {
             .items_center()
             .rounded(px(7.0))
             .border_1()
-            .border_color(if focused {
-                rgba(0x075beaff)
+            .border_color(if self.invalid {
+                crate::DANGER
+            } else if focused {
+                crate::PRIMARY
             } else {
-                rgba(0x292d33ff)
+                crate::BORDER
             })
-            .bg(rgba(0x15181dff))
-            .text_size(px(12.0))
-            .text_color(rgba(0xf1f0ecff))
+            .bg(crate::APP_BG)
+            .text_size(px(13.0))
+            .text_color(crate::TEXT)
             .child(InputElement { input: cx.entity() })
     }
 }

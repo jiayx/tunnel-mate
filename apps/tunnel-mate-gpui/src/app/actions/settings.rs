@@ -11,6 +11,8 @@ impl TunnelMateApp {
             .clone()
             .unwrap_or_default();
         self.settings_form = Some(SettingsForm {
+            validation_error: None,
+            scroll: gpui::ScrollHandle::new(),
             launch_on_startup: self.config.settings.launch_on_startup,
             start_minimized: self.config.settings.start_minimized,
             close_to_tray: self.config.settings.close_to_tray,
@@ -18,6 +20,21 @@ impl TunnelMateApp {
             connect_timeout: cx.new(|cx| TextInput::new(cx, "15", connect_timeout)),
             ssh_config_path: cx.new(|cx| TextInput::new(cx, "~/.ssh/config", ssh_path)),
         });
+        for input in [
+            self.settings_form.as_ref().unwrap().keep_alive.clone(),
+            self.settings_form.as_ref().unwrap().connect_timeout.clone(),
+            self.settings_form.as_ref().unwrap().ssh_config_path.clone(),
+        ] {
+            let scroll = self.settings_form.as_ref().unwrap().scroll.clone();
+            input.update(cx, |input, _| input.set_scroll_parent(scroll));
+            cx.subscribe(&input, |this, _, _: &text_input::InputChanged, cx| {
+                if let Some(form) = &mut this.settings_form {
+                    form.validation_error = None;
+                }
+                cx.notify();
+            })
+            .detach();
+        }
         cx.notify();
     }
 
@@ -30,28 +47,40 @@ impl TunnelMateApp {
         let Some(form) = &self.settings_form else {
             return;
         };
-        let keep_alive = match form.keep_alive.read(cx).value().parse::<u32>() {
-            Ok(value) if value > 0 => value,
-            _ => {
-                self.show_persistent_notice(self.language.pick(
+        let values = [
+            (
+                form.keep_alive.clone(),
+                self.language.pick(
                     "保活间隔必须是大于 0 的秒数",
                     "Keep-alive must be greater than 0 seconds",
-                ));
-                cx.notify();
-                return;
-            }
-        };
-        let connect_timeout = match form.connect_timeout.read(cx).value().parse::<u32>() {
-            Ok(value) if value > 0 => value,
-            _ => {
-                self.show_persistent_notice(self.language.pick(
+                ),
+            ),
+            (
+                form.connect_timeout.clone(),
+                self.language.pick(
                     "连接超时必须是大于 0 的秒数",
                     "Connection timeout must be greater than 0 seconds",
-                ));
-                cx.notify();
-                return;
+                ),
+            ),
+        ];
+        let mut parsed = Vec::new();
+        for (input, message) in values {
+            match input.read(cx).value().trim().parse::<u32>() {
+                Ok(value) if value > 0 => {
+                    input.update(cx, |input, cx| input.set_invalid(false, cx));
+                    parsed.push(value);
+                }
+                _ => {
+                    input.update(cx, |input, cx| input.set_invalid(true, cx));
+                    self.pending_field_focus = Some(input);
+                    self.settings_form.as_mut().unwrap().validation_error = Some(message.into());
+                    cx.notify();
+                    return;
+                }
             }
-        };
+        }
+        let [keep_alive, connect_timeout] = [parsed[0], parsed[1]];
+        let form = self.settings_form.as_ref().unwrap();
         let ssh_path = form.ssh_config_path.read(cx).value();
         let mut next_config = self.config.clone();
         let autostart_changed = form.launch_on_startup != self.config.settings.launch_on_startup

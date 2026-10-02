@@ -30,7 +30,7 @@ impl TunnelMateApp {
                     .gap(px(10.0))
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(px(12.0))
                             .text_color(MUTED)
                             .child(match (issue, *confirm_replace, self.language) {
                                 (HostKeyIssue::Unknown, _, Language::Zh) => format!("首次连接 {host}:{port}，请核对指纹后再信任。"),
@@ -49,7 +49,7 @@ impl TunnelMateApp {
                                 .flex()
                                 .flex_col()
                                 .gap(px(5.0))
-                                .child(div().text_size(px(10.0)).text_color(MUTED).child(
+                                .child(div().text_size(px(12.0)).text_color(MUTED).child(
                                     self.language.pick("已保存的指纹", "Saved fingerprint"),
                                 ))
                                 .child(
@@ -57,7 +57,7 @@ impl TunnelMateApp {
                                         .p(px(10.0))
                                         .rounded(px(8.0))
                                         .bg(APP_BG)
-                                        .text_size(px(10.0))
+                                        .text_size(px(12.0))
                                         .text_color(MUTED)
                                         .child(saved_fingerprints.join("\n")),
                                 ),
@@ -68,7 +68,7 @@ impl TunnelMateApp {
                             .flex()
                             .flex_col()
                             .gap(px(5.0))
-                            .child(div().text_size(px(10.0)).text_color(MUTED).child(
+                            .child(div().text_size(px(12.0)).text_color(MUTED).child(
                                 if *issue == HostKeyIssue::Changed {
                                     self.language.pick("服务器的新指纹", "New server fingerprint")
                                 } else {
@@ -80,7 +80,7 @@ impl TunnelMateApp {
                                     .p(px(10.0))
                                     .rounded(px(8.0))
                                     .bg(APP_BG)
-                                    .text_size(px(10.0))
+                                    .text_size(px(12.0))
                                     .text_color(TEXT)
                                     .child(fingerprint.clone()),
                             ),
@@ -100,10 +100,9 @@ impl TunnelMateApp {
                                     .rounded(px(8.0))
                                     .border_1()
                                     .border_color(BORDER)
-                                    .text_size(px(11.0))
+                                    .text_size(px(12.0))
                                     .cursor_pointer()
-                                    .on_mouse_up(
-                                        MouseButton::Left,
+                                    .id("copy-fingerprint").key_context("TunnelButton").tab_index(0).focus(|style| style.border_color(PRIMARY_HOVER)).on_click(
                                         cx.listener(|this, _, _, cx| this.copy_prompted_fingerprint(cx)),
                                     )
                                     .child(self.language.pick("复制指纹", "Copy fingerprint")),
@@ -117,10 +116,9 @@ impl TunnelMateApp {
                                     .rounded(px(8.0))
                                     .border_1()
                                     .border_color(BORDER)
-                                    .text_size(px(11.0))
+                                    .text_size(px(12.0))
                                     .cursor_pointer()
-                                    .on_mouse_up(
-                                        MouseButton::Left,
+                                    .id("copy-cleanup-command").key_context("TunnelButton").tab_index(0).focus(|style| style.border_color(PRIMARY_HOVER)).on_click(
                                         cx.listener(|this, _, _, cx| this.copy_known_host_cleanup(cx)),
                                     )
                                     .child(self.language.pick("复制清理命令", "Copy cleanup command")),
@@ -134,10 +132,9 @@ impl TunnelMateApp {
                                     .rounded(px(8.0))
                                     .border_1()
                                     .border_color(BORDER)
-                                    .text_size(px(11.0))
+                                    .text_size(px(12.0))
                                     .cursor_pointer()
-                                    .on_mouse_up(
-                                        MouseButton::Left,
+                                    .id("cancel-host-key").key_context("TunnelButton").tab_index(0).focus(|style| style.border_color(PRIMARY_HOVER)).on_click(
                                         cx.listener(move |this, _, _, cx| {
                                             if is_confirming {
                                                 this.cancel_host_key_replacement(cx);
@@ -161,10 +158,9 @@ impl TunnelMateApp {
                                     .items_center()
                                     .rounded(px(8.0))
                                     .bg(PRIMARY)
-                                    .text_size(px(11.0))
+                                    .text_size(px(12.0))
                                     .cursor_pointer()
-                                    .on_mouse_up(
-                                        MouseButton::Left,
+                                    .id("trust-host-key").key_context("TunnelButton").tab_index(0).focus(|style| style.border_color(PRIMARY_HOVER)).on_click(
                                         cx.listener(|this, _, _, cx| this.trust_prompted_host(cx)),
                                     )
                                     .child(self.language.pick("信任并连接", "Trust and connect")),
@@ -177,10 +173,9 @@ impl TunnelMateApp {
                                     .items_center()
                                     .rounded(px(8.0))
                                     .bg(PRIMARY)
-                                    .text_size(px(11.0))
+                                    .text_size(px(12.0))
                                     .cursor_pointer()
-                                    .on_mouse_up(
-                                        MouseButton::Left,
+                                    .id("review-host-key-replacement").key_context("TunnelButton").tab_index(0).focus(|style| style.border_color(PRIMARY_HOVER)).on_click(
                                         cx.listener(|this, _, _, cx| this.begin_host_key_replacement(cx)),
                                     )
                                     .child(self.language.pick("更新密钥并连接", "Update key and connect")),
@@ -193,10 +188,9 @@ impl TunnelMateApp {
                                     .items_center()
                                     .rounded(px(8.0))
                                     .bg(color(0xB83A45))
-                                    .text_size(px(11.0))
+                                    .text_size(px(12.0))
                                     .cursor_pointer()
-                                    .on_mouse_up(
-                                        MouseButton::Left,
+                                    .id("confirm-host-key-replacement").key_context("TunnelButton").tab_index(0).focus(|style| style.border_color(PRIMARY_HOVER)).on_click(
                                         cx.listener(|this, _, _, cx| this.replace_prompted_host_key(cx)),
                                     )
                                     .child(self.language.pick("确认更新并连接", "Confirm update and connect")),
@@ -212,7 +206,7 @@ impl TunnelMateApp {
                     .gap(px(12.0))
                     .child(
                         div()
-                            .text_size(px(11.0))
+                            .text_size(px(12.0))
                             .text_color(MUTED)
                             .child(self.language.pick(
                                 "该私钥已加密，口令只用于本次连接，不会写入配置文件。",
@@ -237,10 +231,9 @@ impl TunnelMateApp {
                                     .rounded(px(8.0))
                                     .border_1()
                                     .border_color(BORDER)
-                                    .text_size(px(11.0))
+                                    .text_size(px(12.0))
                                     .cursor_pointer()
-                                    .on_mouse_up(
-                                        MouseButton::Left,
+                                    .id("cancel-passphrase").key_context("TunnelButton").tab_index(0).focus(|style| style.border_color(PRIMARY_HOVER)).on_click(
                                         cx.listener(|this, _, _, cx| this.close_auth_prompt(cx)),
                                     )
                                     .child(self.language.pick("取消", "Cancel")),
@@ -253,10 +246,9 @@ impl TunnelMateApp {
                                     .items_center()
                                     .rounded(px(8.0))
                                     .bg(PRIMARY)
-                                    .text_size(px(11.0))
+                                    .text_size(px(12.0))
                                     .cursor_pointer()
-                                    .on_mouse_up(
-                                        MouseButton::Left,
+                                    .id("submit-passphrase").key_context("TunnelButton").tab_index(0).focus(|style| style.border_color(PRIMARY_HOVER)).on_click(
                                         cx.listener(|this, _, _, cx| this.submit_passphrase(cx)),
                                     )
                                     .child(self.language.pick("连接", "Connect")),
