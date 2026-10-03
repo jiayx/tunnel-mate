@@ -237,11 +237,14 @@ pub fn build_tray(
     let (width, height) = decoded.dimensions();
     let icon = Icon::from_rgba(decoded.into_rgba8().into_raw(), width, height)
         .map_err(|error| format!("创建托盘图标失败：{error}"))?;
-    TrayIconBuilder::new()
+    let builder = TrayIconBuilder::new();
+    #[cfg(target_os = "macos")]
+    let builder = builder.with_icon_templated(icon);
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.with_icon(icon);
+    builder
         .with_id("main-tray")
         .with_tooltip("Tunnel Mate")
-        .with_icon(icon)
-        .with_icon_as_template(cfg!(target_os = "macos"))
         .with_menu(Box::new(menu))
         // macOS opens the status menu from either mouse button. Windows uses
         // left click to restore and right click for the menu. Linux ignores this

@@ -288,9 +288,9 @@ impl TextInput {
         }
     }
 
-    fn on_mouse_up_out(&mut self, _: &MouseUpEvent, window: &mut Window, _: &mut Context<Self>) {
+    fn on_mouse_up_out(&mut self, _: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         if self.focus_handle.is_focused(window) {
-            window.blur();
+            window.blur(cx);
         }
     }
 
