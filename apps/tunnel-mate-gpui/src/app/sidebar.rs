@@ -419,34 +419,24 @@ impl TunnelMateApp {
                     })),
                 )
                 .child(
-                    button(
+                    icon_button(
                         theme,
                         SharedString::from(format!("diagnose-{}", tunnel.id)),
                         self.language.pick("诊断", "Diagnose"),
+                        "icons/activity",
                     )
-                    .w(px(72.0))
-                    .h(px(32.0))
-                    .px(px(8.0))
-                    .bg(rgba(0x00000000))
-                    .border_color(rgba(0x00000000))
-                    .text_color(theme.muted)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         this.run_tunnel_diagnostics(diagnose_id.clone(), cx);
                     })),
                 )
                 .child(
-                    button(
+                    icon_button(
                         theme,
                         SharedString::from(format!("edit-{}", tunnel.id)),
                         self.language.pick("编辑", "Edit"),
+                        "icons/edit",
                     )
-                    .w(px(52.0))
-                    .h(px(32.0))
-                    .px(px(8.0))
-                    .bg(rgba(0x00000000))
-                    .border_color(rgba(0x00000000))
-                    .text_color(theme.muted)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         this.edit_tunnel(edit_id.clone(), cx);

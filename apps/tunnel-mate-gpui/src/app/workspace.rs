@@ -15,7 +15,7 @@ pub(super) fn tunnel_columns(
         .child(div().flex_1().min_w_0().child(identity))
         .child(div().flex_1().min_w_0().child(forwarding))
         .child(div().w(px(56.0)).flex_none().child(kind))
-        .child(div().w(px(244.0)).flex_none().child(actions))
+        .child(div().w(px(184.0)).flex_none().child(actions))
 }
 
 fn render_activity_row(theme: Theme, language: Language, event: LogEvent) -> gpui::Div {

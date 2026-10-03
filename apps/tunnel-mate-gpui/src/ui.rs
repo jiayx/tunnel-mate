@@ -10,6 +10,7 @@ impl gpui::AssetSource for Assets {
             "icons/history" => "<path d='M3 11a9 9 0 1 1 2.6 7M3 4v7h7M12 7v5l3 2'/>",
             "icons/power" => "<path d='M12 3v9M6.2 5.8a8 8 0 1 0 11.6 0'/>",
             "icons/alert" => "<circle cx='12' cy='12' r='9'/><path d='M12 7v6m0 4h.01'/>",
+            "icons/edit" => "<path d='m15 4 5 5M4 20l5-1L20 8a3.5 3.5 0 0 0-5-5L4 14Z'/>",
             "icons/activity" => "<path d='M3 12h4l3-8 4 16 3-8h4'/>",
             "icons/folder" => "<path d='M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z'/>",
             "icons/settings" => "<path d='M4 6h16M4 12h16M4 18h16'/><circle cx='8' cy='6' r='2' fill='black'/><circle cx='16' cy='12' r='2' fill='black'/><circle cx='10' cy='18' r='2' fill='black'/>",
@@ -72,6 +73,41 @@ pub(crate) fn button(
     button_base(theme, id, label)
         .hover(|style| style.bg(theme.surface_hover).border_color(theme.muted_dark))
         .focus(|style| style.border_color(theme.primary))
+}
+
+struct ButtonTooltip(&'static str);
+
+impl Render for ButtonTooltip {
+    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::from_appearance(window.appearance());
+        div()
+            .px(px(8.0))
+            .py(px(5.0))
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.surface)
+            .shadow_md()
+            .text_size(px(12.0))
+            .text_color(theme.text)
+            .child(self.0)
+    }
+}
+
+pub(crate) fn icon_button(
+    theme: Theme,
+    id: impl Into<gpui::ElementId>,
+    label: &'static str,
+    glyph: &'static str,
+) -> gpui::Stateful<gpui::Div> {
+    button(theme, id, "")
+        .aria_label(label)
+        .size(px(32.0))
+        .px(px(0.0))
+        .gap(px(0.0))
+        .bg(rgba(0x00000000))
+        .child(icon(theme, glyph).text_color(theme.muted))
+        .tooltip(move |_, cx| cx.new(|_| ButtonTooltip(label)).into())
 }
 
 pub(crate) fn primary_button(

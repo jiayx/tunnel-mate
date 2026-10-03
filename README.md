@@ -80,6 +80,7 @@ chmod +x tunnel-mate-*-linux-x86_64.AppImage
    address. Select **Save and connect**, or clear **Connect after save** to
    save without connecting.
 4. Connect, disconnect, retry, diagnose, or edit a tunnel directly from its row.
+   Hover over the diagnostic and edit icons to see their action names.
    The connection button's dot shows its state: gray for offline, green for
    connected, amber while connecting or reconnecting, and red for failure.
    Editing a running tunnel's connection settings requires confirmation before
