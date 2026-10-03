@@ -79,8 +79,9 @@ chmod +x tunnel-mate-*-linux-x86_64.AppImage
 3. Enter the listening address and, for local or remote forwarding, the target
    address. Select **Save and connect**, or clear **Connect after save** to
    save without connecting.
-4. Use **Connect** or **Disconnect** on each row. Select a tunnel to **Edit**
-   or **Diagnose** it from the bottom toolbar.
+4. Connect, disconnect, retry, diagnose, or edit a tunnel directly from its row.
+   The connection button's dot shows its state: gray for offline, green for
+   connected, amber while connecting or reconnecting, and red for failure.
    Editing a running tunnel's connection settings requires confirmation before
    reconnecting. Updating its name, description, or group keeps it connected.
 

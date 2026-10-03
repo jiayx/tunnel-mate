@@ -4,7 +4,7 @@ pub(super) fn tunnel_columns(
     identity: impl IntoElement,
     forwarding: impl IntoElement,
     kind: impl IntoElement,
-    connection: impl IntoElement,
+    actions: impl IntoElement,
 ) -> gpui::Div {
     div()
         .w_full()
@@ -14,8 +14,8 @@ pub(super) fn tunnel_columns(
         .px(px(22.0))
         .child(div().flex_1().min_w_0().child(identity))
         .child(div().flex_1().min_w_0().child(forwarding))
-        .child(div().w(px(64.0)).flex_none().child(kind))
-        .child(div().w(px(108.0)).flex_none().child(connection))
+        .child(div().w(px(56.0)).flex_none().child(kind))
+        .child(div().w(px(244.0)).flex_none().child(actions))
 }
 
 fn render_activity_row(theme: Theme, language: Language, event: LogEvent) -> gpui::Div {
@@ -131,10 +131,6 @@ impl TunnelMateApp {
         let theme = self.theme;
         let activity = self.filter == TunnelFilter::Activity;
         let tunnels = self.filtered_tunnels(cx);
-        let selected = tunnels
-            .iter()
-            .find(|tunnel| self.selected_tunnel.as_deref() == Some(tunnel.id.as_str()))
-            .copied();
         let scope = self
             .config
             .tunnels
@@ -493,9 +489,7 @@ impl TunnelMateApp {
                         .truncate()
                         .child(self.language.pick("监听 → 目标", "LISTEN → TARGET")),
                     div().child(self.language.pick("类型", "TYPE")),
-                    div()
-                        .text_center()
-                        .child(self.language.pick("连接", "CONNECTION")),
+                    div().child(self.language.pick("操作", "ACTIONS")),
                 )
                 .h(px(34.0))
                 .flex_none()
@@ -533,82 +527,6 @@ impl TunnelMateApp {
                     .child(error.clone()),
             );
         }
-        center = center.child(list);
-        if !activity {
-            let mut footer = div()
-                .h(px(58.0))
-                .flex_none()
-                .px(px(22.0))
-                .flex()
-                .items_center()
-                .gap(px(12.0))
-                .border_t_1()
-                .border_color(theme.border_soft)
-                .bg(theme.surface);
-            if let Some(tunnel) = selected {
-                let diagnose_id = tunnel.id.clone();
-                let edit_id = tunnel.id.clone();
-                footer = footer
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap(px(4.0))
-                            .child(
-                                div()
-                                    .truncate()
-                                    .text_size(px(12.0))
-                                    .child(tunnel.name.clone()),
-                            )
-                            .child(
-                                div()
-                                    .truncate()
-                                    .text_size(px(11.0))
-                                    .text_color(theme.muted)
-                                    .child(Self::route(tunnel)),
-                            ),
-                    )
-                    .child(
-                        button(
-                            theme,
-                            "diagnose-selected",
-                            self.language.pick("诊断连接", "Diagnose"),
-                        )
-                        .flex_row_reverse()
-                        .child(
-                            icon(theme, "icons/activity")
-                                .size(px(14.0))
-                                .text_color(theme.muted),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.run_tunnel_diagnostics(diagnose_id.clone(), cx)
-                        })),
-                    )
-                    .child(
-                        button(theme, "edit-selected", self.language.pick("编辑", "Edit"))
-                            .flex_row_reverse()
-                            .child(
-                                icon(theme, "icons/edit")
-                                    .size(px(14.0))
-                                    .text_color(theme.muted),
-                            )
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.edit_tunnel(edit_id.clone(), cx)
-                            })),
-                    );
-            } else {
-                footer = footer.child(div().text_size(px(12.0)).text_color(theme.muted).child(
-                    if self.language == Language::Zh {
-                        format!("{} 条隧道", tunnels.len())
-                    } else {
-                        format!("{} tunnels", tunnels.len())
-                    },
-                ));
-            }
-            center = center.child(footer);
-        }
-        center
+        center.child(list)
     }
 }

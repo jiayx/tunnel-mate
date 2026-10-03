@@ -307,6 +307,8 @@ impl TunnelMateApp {
         };
         let select_id = tunnel.id.clone();
         let toggle_id = tunnel.id.clone();
+        let diagnose_id = tunnel.id.clone();
+        let edit_id = tunnel.id.clone();
         let host = format!(
             "{}@{}{}",
             tunnel.ssh_user,
@@ -379,16 +381,17 @@ impl TunnelMateApp {
                 .child(kind),
             div()
                 .flex()
-                .flex_col()
                 .items_center()
-                .gap(px(4.0))
+                .gap(px(8.0))
                 .child(
                     button(
                         theme,
                         SharedString::from(format!("toggle-{}", tunnel.id)),
                         connect_label,
                     )
-                    .w_full()
+                    .aria_label(format!("{status_label}, {connect_label}"))
+                    .flex_row_reverse()
+                    .w(px(104.0))
                     .h(px(32.0))
                     .px(px(8.0))
                     .bg(if selected {
@@ -408,6 +411,7 @@ impl TunnelMateApp {
                     } else {
                         theme.text
                     })
+                    .child(div().size(px(6.0)).flex_none().rounded(px(3.0)).bg(tone))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         this.selected_tunnel = Some(toggle_id.clone());
@@ -415,16 +419,38 @@ impl TunnelMateApp {
                     })),
                 )
                 .child(
-                    div()
-                        .h(px(18.0))
-                        .line_height(px(18.0))
-                        .flex()
-                        .items_center()
-                        .gap(px(6.0))
-                        .text_size(px(12.0))
-                        .text_color(tone)
-                        .child(div().size(px(6.0)).flex_none().rounded(px(3.0)).bg(tone))
-                        .child(div().truncate().child(status_label)),
+                    button(
+                        theme,
+                        SharedString::from(format!("diagnose-{}", tunnel.id)),
+                        self.language.pick("诊断", "Diagnose"),
+                    )
+                    .w(px(72.0))
+                    .h(px(32.0))
+                    .px(px(8.0))
+                    .bg(rgba(0x00000000))
+                    .border_color(rgba(0x00000000))
+                    .text_color(theme.muted)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.run_tunnel_diagnostics(diagnose_id.clone(), cx);
+                    })),
+                )
+                .child(
+                    button(
+                        theme,
+                        SharedString::from(format!("edit-{}", tunnel.id)),
+                        self.language.pick("编辑", "Edit"),
+                    )
+                    .w(px(52.0))
+                    .h(px(32.0))
+                    .px(px(8.0))
+                    .bg(rgba(0x00000000))
+                    .border_color(rgba(0x00000000))
+                    .text_color(theme.muted)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.edit_tunnel(edit_id.clone(), cx);
+                    })),
                 ),
         )
         .id(SharedString::from(format!("tunnel-row-{}", tunnel.id)))

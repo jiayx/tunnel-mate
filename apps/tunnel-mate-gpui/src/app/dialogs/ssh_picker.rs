@@ -7,11 +7,7 @@ impl TunnelMateApp {
         div()
             .absolute()
             .right(px(18.0))
-            .bottom(px(if self.filter == TunnelFilter::Activity {
-                18.0
-            } else {
-                76.0
-            }))
+            .bottom(px(18.0))
             .occlude()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())

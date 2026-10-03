@@ -375,7 +375,7 @@ pub(crate) fn install_native_behavior(cx: &mut App, _language: Language) {
 pub(crate) fn platform_window_options(bounds: Bounds<gpui::Pixels>) -> WindowOptions {
     let mut options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
-        window_min_size: Some(size(px(800.0), px(580.0))),
+        window_min_size: Some(size(px(960.0), px(600.0))),
         ..Default::default()
     };
 
