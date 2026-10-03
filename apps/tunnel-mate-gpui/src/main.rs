@@ -419,7 +419,7 @@ fn main() {
     });
     application.run(move |cx: &mut App| {
         #[cfg(target_os = "linux")]
-        pump_linux_tray_events(cx);
+        pump_linux_events(cx);
 
         let start_minimized = minimized_arg
             || (launched_as_login_item()

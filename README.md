@@ -14,6 +14,7 @@ with Rust and GPUI.
 - Automatic reconnect, connect on app launch, launch at login, and tray controls
 - Configuration backup and import; passwords stored in the system keyring
 - Chinese and English UI, with light and dark appearance matching the operating system
+- Edge-aligned scrollbars follow the system's always-visible or auto-hide preference
 
 ## Installation
 

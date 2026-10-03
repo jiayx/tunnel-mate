@@ -1,9 +1,17 @@
 use super::*;
 
 #[cfg(target_os = "linux")]
-pub(crate) fn pump_linux_tray_events(cx: &mut App) {
-    // GPUI owns the native event loop. The GTK tray still needs its GLib
-    // sources dispatched on the same thread that created the menu and icon.
+pub(crate) fn pump_linux_events(cx: &mut App) {
+    use gtk::prelude::*;
+    let scrollbars_changed = std::rc::Rc::new(std::cell::Cell::new(false));
+    if let Some(settings) = gtk::Settings::default() {
+        let changed = scrollbars_changed.clone();
+        settings.connect_notify_local(Some("gtk-overlay-scrolling"), move |_, _| {
+            changed.set(true);
+        });
+    }
+    // GPUI owns the native event loop. Dispatch GTK tray and settings events
+    // on the same thread that created the menu and icon.
     cx.spawn(async move |cx| {
         let context = gtk::glib::MainContext::default();
         loop {
@@ -13,12 +21,34 @@ pub(crate) fn pump_linux_tray_events(cx: &mut App) {
                     break;
                 }
             }
+            if scrollbars_changed.replace(false) {
+                cx.update(|cx| cx.refresh_windows());
+            }
             cx.background_executor()
                 .timer(Duration::from_millis(16))
                 .await;
         }
     })
     .detach();
+}
+
+pub(crate) fn auto_hide_scrollbars(cx: &App) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::prelude::*;
+        // GTK's environment override takes precedence over the desktop setting.
+        if std::env::var_os("GTK_OVERLAY_SCROLLING").is_some_and(|value| value == "0") {
+            return false;
+        }
+        if let Some(settings) = gtk::Settings::default() {
+            // This property is available since GTK 3.24.9. Keep older GTK builds usable.
+            if settings.find_property("gtk-overlay-scrolling").is_some() {
+                return settings.property("gtk-overlay-scrolling");
+            }
+        }
+    }
+    // AppKit's preferredScrollerStyle on macOS; UISettings.AutoHideScrollBars on Windows.
+    cx.should_auto_hide_scrollbars()
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
