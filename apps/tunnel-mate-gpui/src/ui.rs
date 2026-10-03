@@ -62,7 +62,8 @@ fn button_base(
         .text_size(px(12.0))
         .text_color(theme.text)
         .cursor_pointer()
-        .child(label)
+        // An empty text item would add a gap before an icon and shift it off-center.
+        .when(!label.is_empty(), |button| button.child(label))
 }
 
 pub(crate) fn button(
@@ -104,7 +105,6 @@ pub(crate) fn icon_button(
         .aria_label(label)
         .size(px(32.0))
         .px(px(0.0))
-        .gap(px(0.0))
         .bg(rgba(0x00000000))
         .child(icon(theme, glyph).text_color(theme.muted))
         .tooltip(move |_, cx| cx.new(|_| ButtonTooltip(label)).into())
