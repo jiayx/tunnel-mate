@@ -430,40 +430,35 @@ impl TunnelMateApp {
                     failed,
                 ),
             ];
-            center =
-                center.child(
-                    div()
-                        .h(px(60.0))
-                        .flex_none()
-                        .px(px(22.0))
-                        .pb(px(16.0))
-                        .flex()
-                        .items_center()
-                        .gap(px(16.0))
-                        .child(div().flex().gap(px(3.0)).children(
-                            filters.into_iter().enumerate().map(
+            center = center.child(
+                div()
+                    .h(px(60.0))
+                    .flex_none()
+                    .px(px(22.0))
+                    .pb(px(16.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(16.0))
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(3.0))
+                            .p(px(3.0))
+                            .rounded(px(10.0))
+                            .bg(theme.app_bg)
+                            .children(filters.into_iter().enumerate().map(
                                 |(index, (filter, label, glyph, count))| {
                                     let selected = self.status_filter == filter;
-                                    button(
+                                    segment_button(
                                         theme,
                                         ("status-filter", index),
                                         format!("{label}  {count}"),
+                                        selected,
                                     )
-                                    .h(px(34.0))
+                                    .h(px(32.0))
                                     .flex_row_reverse()
                                     .px(px(10.0))
-                                    .rounded(px(6.0))
-                                    .bg(if selected {
-                                        theme.selected
-                                    } else {
-                                        theme.surface
-                                    })
-                                    .border_color(if selected {
-                                        theme.selected_border
-                                    } else {
-                                        rgba(0x00000000)
-                                    })
-                                    .text_color(if selected { theme.accent } else { theme.muted })
+                                    .rounded(px(7.0))
                                     .when_some(glyph, |button, glyph| {
                                         button.child(icon(theme, glyph).size(px(13.0)).text_color(
                                             if selected { theme.accent } else { theme.muted },
@@ -476,10 +471,10 @@ impl TunnelMateApp {
                                         },
                                     ))
                                 },
-                            ),
-                        ))
-                        .child(div().flex_1().min_w_0().child(self.search.clone())),
-                );
+                            )),
+                    )
+                    .child(div().flex_1().min_w_0().child(self.search.clone())),
+            );
             center = center.child(
                 tunnel_columns(
                     div()

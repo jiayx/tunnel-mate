@@ -16,7 +16,7 @@ mod ui;
 use keyboard::{modal_layer, ModalLayer};
 use ui::{
     button, close_button, endpoint_label, icon, icon_button, primary_button, section_heading,
-    toggle,
+    segment_button, toggle,
 };
 
 use std::collections::{HashMap, HashSet, VecDeque};

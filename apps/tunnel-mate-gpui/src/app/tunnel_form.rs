@@ -14,20 +14,9 @@ impl TunnelMateApp {
         let editing = form.editing_id.is_some();
         let kind_button = |label: &'static str, kind: ForwardKind, id: &'static str| {
             let selected = form.kind == kind;
-            button(theme, id, label)
+            segment_button(theme, id, label, selected)
                 .flex_1()
                 .h(px(36.0))
-                .bg(if selected {
-                    theme.selected
-                } else {
-                    rgba(0x00000000)
-                })
-                .border_color(if selected {
-                    theme.selected_border
-                } else {
-                    rgba(0x00000000)
-                })
-                .text_color(if selected { theme.text } else { theme.muted })
                 .on_click(cx.listener(move |this, _, _, cx| this.set_form_kind(kind, cx)))
         };
         let (description, listen_label, target_label) = match form.kind {

@@ -37,7 +37,7 @@ impl TunnelMateApp {
                     .id(("group-option", index))
                     .key_context("TunnelButton")
                     .tab_index(0)
-                    .focus(|style| style.border_color(theme.primary))
+                    .focus_visible(|style| style.border_color(theme.primary))
                     .h(px(32.0))
                     .flex_none()
                     .px(px(9.0))
@@ -46,11 +46,7 @@ impl TunnelMateApp {
                     .gap(px(6.0))
                     .rounded(px(6.0))
                     .border_1()
-                    .border_color(if selected {
-                        theme.selected_border
-                    } else {
-                        rgba(0x00000000)
-                    })
+                    .border_color(rgba(0x00000000))
                     .bg(if selected {
                         theme.selected
                     } else {
@@ -98,7 +94,7 @@ impl TunnelMateApp {
                     .id("form-group-selector")
                     .key_context("TunnelButton")
                     .tab_index(0)
-                    .focus(|style| style.border_color(theme.primary))
+                    .focus_visible(|style| style.border_color(theme.primary))
                     .w_full()
                     .h_full()
                     .px(px(11.0))

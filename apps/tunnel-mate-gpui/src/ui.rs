@@ -73,7 +73,42 @@ pub(crate) fn button(
 ) -> gpui::Stateful<gpui::Div> {
     button_base(theme, id, label)
         .hover(|style| style.bg(theme.surface_hover).border_color(theme.muted_dark))
-        .focus(|style| style.border_color(theme.primary))
+        .focus_visible(|style| style.border_color(theme.primary))
+}
+
+pub(crate) fn segment_button(
+    theme: Theme,
+    id: impl Into<gpui::ElementId>,
+    label: impl Into<SharedString>,
+    selected: bool,
+) -> gpui::Stateful<gpui::Div> {
+    button_base(theme, id, label)
+        .aria_toggled(if selected {
+            gpui::Toggled::True
+        } else {
+            gpui::Toggled::False
+        })
+        .border_color(rgba(0x00000000))
+        .bg(if selected {
+            theme.surface
+        } else {
+            rgba(0x00000000)
+        })
+        .text_color(if selected { theme.accent } else { theme.muted })
+        .font_weight(if selected {
+            FontWeight::SEMIBOLD
+        } else {
+            FontWeight::NORMAL
+        })
+        .when(selected, |button| button.shadow_sm())
+        .hover(move |style| {
+            style.bg(if selected {
+                theme.surface
+            } else {
+                theme.surface_hover
+            })
+        })
+        .focus_visible(|style| style.border_color(theme.primary))
 }
 
 struct ButtonTooltip(&'static str);
@@ -125,7 +160,7 @@ pub(crate) fn primary_button(
                 .bg(theme.primary_hover)
                 .border_color(theme.primary_hover)
         })
-        .focus(|style| style.border_color(theme.text))
+        .focus_visible(|style| style.border_color(theme.text))
 }
 
 pub(crate) fn close_button(theme: Theme, id: &'static str) -> gpui::Stateful<gpui::Div> {
@@ -166,7 +201,7 @@ pub(crate) fn toggle(theme: Theme, id: &'static str, checked: bool) -> gpui::Sta
             theme.toggle_off
         })
         .cursor_pointer()
-        .focus(|style| style.border_color(theme.text))
+        .focus_visible(|style| style.border_color(theme.text))
         .child(
             div()
                 .size(px(18.0))

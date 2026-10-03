@@ -4,10 +4,6 @@ impl TunnelMateApp {
     pub(crate) fn set_filter(&mut self, filter: TunnelFilter, cx: &mut Context<Self>) {
         self.filter = filter;
         self.tunnel_scroll = UniformListScrollHandle::new();
-        self.selected_tunnel = self
-            .filtered_tunnels(cx)
-            .first()
-            .map(|tunnel| tunnel.id.clone());
         cx.notify();
     }
 
@@ -28,7 +24,6 @@ impl TunnelMateApp {
     }
 
     pub(crate) fn edit_tunnel(&mut self, id: String, cx: &mut Context<Self>) {
-        self.selected_tunnel = Some(id.clone());
         let tunnel = self
             .config
             .tunnels
@@ -137,7 +132,6 @@ impl TunnelMateApp {
                 self.statuses.remove(&id);
                 self.pending_starts.remove(&id);
                 self.pending_delete = None;
-                self.selected_tunnel = None;
                 self.form = None;
                 let message = if self.language == Language::Zh {
                     format!("已删除“{name}”")
@@ -160,7 +154,6 @@ impl TunnelMateApp {
     }
 
     pub(crate) fn run_tunnel_diagnostics(&mut self, id: String, cx: &mut Context<Self>) {
-        self.selected_tunnel = Some(id.clone());
         let listener_is_current_tunnel = self.status(&id) == TunnelStatus::Running;
         let Some(tunnel) = self.config.tunnels.iter().find(|t| t.id == id).cloned() else {
             return;

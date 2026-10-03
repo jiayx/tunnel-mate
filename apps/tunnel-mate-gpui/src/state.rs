@@ -486,7 +486,6 @@ pub(crate) struct TunnelMateApp {
     pub(crate) search: Entity<TextInput>,
     pub(crate) filter: TunnelFilter,
     pub(crate) status_filter: TunnelStatusFilter,
-    pub(crate) selected_tunnel: Option<String>,
     pub(crate) form: Option<TunnelForm>,
     pub(crate) notice: Option<AppNotice>,
     pub(crate) next_notice_id: u64,

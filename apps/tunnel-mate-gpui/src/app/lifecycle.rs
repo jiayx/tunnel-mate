@@ -75,16 +75,11 @@ impl TunnelMateApp {
             });
         }
 
-        let selected_tunnel = config.tunnels.first().map(|tunnel| tunnel.id.clone());
         let search_placeholder =
             language.pick("搜索名称、主机或地址", "Search name, host, or address");
         let search = cx.new(|cx| TextInput::new(cx, search_placeholder, ""));
         cx.subscribe(&search, |this, _, _: &text_input::InputChanged, cx| {
             this.tunnel_scroll = UniformListScrollHandle::new();
-            this.selected_tunnel = this
-                .filtered_tunnels(cx)
-                .first()
-                .map(|tunnel| tunnel.id.clone());
             cx.notify();
         })
         .detach();
@@ -103,7 +98,6 @@ impl TunnelMateApp {
             search,
             filter: TunnelFilter::All,
             status_filter: TunnelStatusFilter::All,
-            selected_tunnel,
             form: None,
             notice: None,
             next_notice_id: 0,
@@ -288,7 +282,6 @@ impl TunnelMateApp {
                     .iter()
                     .map(|tunnel| (tunnel.id.clone(), TunnelStatus::Stopped))
                     .collect();
-                self.selected_tunnel = self.config.tunnels.first().map(|tunnel| tunnel.id.clone());
                 self.filter = TunnelFilter::All;
                 self.status_filter = TunnelStatusFilter::All;
                 self.settings_form = None;

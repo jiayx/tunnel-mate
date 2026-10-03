@@ -290,7 +290,6 @@ impl TunnelMateApp {
                 self.statuses
                     .entry(id.clone())
                     .or_insert(TunnelStatus::Stopped);
-                self.selected_tunnel = Some(id.clone());
                 self.form = None;
                 let saved_message = if self.language == Language::Zh {
                     format!("已保存“{name}”")
@@ -317,11 +316,6 @@ impl TunnelMateApp {
             }
             Err(error) => self.show_persistent_notice(format!("保存失败：{error}")),
         }
-        cx.notify();
-    }
-
-    pub(super) fn select_tunnel(&mut self, tunnel_id: String, cx: &mut Context<Self>) {
-        self.selected_tunnel = Some(tunnel_id);
         cx.notify();
     }
 

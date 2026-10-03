@@ -98,7 +98,7 @@ impl TunnelMateApp {
             .text_color(if selected { theme.text } else { theme.muted })
             .cursor_pointer()
             .hover(|style| style.bg(theme.surface_hover))
-            .focus(|style| style.border_color(theme.primary_hover))
+            .focus_visible(|style| style.border_color(theme.primary_hover))
             .on_click(cx.listener(move |this, _, _, cx| this.set_filter(filter.clone(), cx)))
             .child(icon(theme, glyph).text_color(if selected { theme.accent } else { theme.muted }))
             .child(div().flex_1().min_w_0().truncate().child(label.into()))
@@ -254,7 +254,7 @@ impl TunnelMateApp {
                     .text_color(theme.muted)
                     .cursor_pointer()
                     .hover(|style| style.bg(theme.surface_hover))
-                    .focus(|style| style.border_color(theme.primary_hover))
+                    .focus_visible(|style| style.border_color(theme.primary_hover))
                     .on_click(cx.listener(|this, _, _, cx| this.open_settings(cx)))
                     .child(icon(theme, "icons/settings"))
                     .child(self.language.pick("设置", "Settings")),
@@ -267,7 +267,6 @@ impl TunnelMateApp {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = self.theme;
-        let selected = self.selected_tunnel.as_deref() == Some(tunnel.id.as_str());
         let status = self.status(&tunnel.id);
         let (tone, status_label, connect_label) = match status {
             TunnelStatus::Running => (
@@ -305,7 +304,6 @@ impl TunnelMateApp {
             }
             ForwardSpec::Socks5 { listen } => ("SOCKS5", listen, None),
         };
-        let select_id = tunnel.id.clone();
         let toggle_id = tunnel.id.clone();
         let diagnose_id = tunnel.id.clone();
         let edit_id = tunnel.id.clone();
@@ -394,16 +392,6 @@ impl TunnelMateApp {
                     .w(px(104.0))
                     .h(px(32.0))
                     .px(px(8.0))
-                    .bg(if selected {
-                        theme.selected
-                    } else {
-                        theme.surface
-                    })
-                    .border_color(if selected {
-                        theme.selected_border
-                    } else {
-                        theme.border
-                    })
                     .text_color(if status == TunnelStatus::Failed {
                         theme.danger
                     } else if !self.is_active(&tunnel.id) {
@@ -414,7 +402,6 @@ impl TunnelMateApp {
                     .child(div().size(px(6.0)).flex_none().rounded(px(3.0)).bg(tone))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
-                        this.selected_tunnel = Some(toggle_id.clone());
                         this.request_toggle(toggle_id.clone(), cx);
                     })),
                 )
@@ -444,23 +431,12 @@ impl TunnelMateApp {
                 ),
         )
         .id(SharedString::from(format!("tunnel-row-{}", tunnel.id)))
-        .role(gpui::Role::Button)
-        .aria_label(tunnel.name.clone())
-        .key_context("TunnelButton")
-        .tab_index(0)
         .h(px(84.0))
         .py(px(14.0))
         .border_b_1()
         .border_color(theme.border_soft)
-        .bg(if selected {
-            theme.selected
-        } else {
-            theme.surface
-        })
-        .cursor_pointer()
-        .hover(|style| style.bg(theme.surface_hover))
-        .focus(|style| style.border_color(theme.primary))
-        .on_click(cx.listener(move |this, _, _, cx| this.select_tunnel(select_id.clone(), cx)))
+        .bg(theme.surface)
+        .hover(|style| style.bg(theme.app_bg))
     }
 
     pub(super) fn form_field(
